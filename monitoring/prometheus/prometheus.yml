@@ -1,0 +1,41 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: 'ophthalmoguide-backend'
+    static_configs:
+      - targets: ['backend:8081']
+
+  - job_name: 'ophthalmoguide-angie'
+    static_configs:
+      - targets: ['frontend:8080']
+    metrics_path: /metrics
+
+  - job_name: 'docker-containers'
+    static_configs:
+      - targets: ['cadvisor:8080']
+
+  - job_name: 'ophthalmoguide-valkey'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+  - job_name: 'ophthalmoguide-postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  - job_name: 'ophthalmoguide-authentik'
+    static_configs:
+      - targets: ['authentik-server:9300']
+
+  - job_name: 'ophthalmoguide-loki'
+    static_configs:
+      - targets: ['loki:3100']
+
+  - job_name: 'ophthalmoguide-promtail'
+    static_configs:
+      - targets: ['promtail:9080']
+
+  - job_name: 'ophthalmoguide-bot'
+    static_configs:
+      - targets: ['bot-workerservice:8082']

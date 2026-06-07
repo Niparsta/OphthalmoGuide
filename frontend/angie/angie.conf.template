@@ -1,0 +1,189 @@
+user  angie;
+worker_processes  auto;
+error_log  /var/log/angie/error.log notice;
+pid        /run/angie/angie.pid;
+
+events {
+    worker_connections  1024;
+}
+
+http {
+    include       /etc/angie/mime.types;
+    include       /etc/angie/prometheus_all.conf;
+    default_type  application/octet-stream;
+
+    sendfile        on;
+    keepalive_timeout  65;
+
+    # Rate limit zones
+    limit_req_zone $binary_remote_addr zone=og_api:10m rate=15r/s;
+    limit_req_zone $binary_remote_addr zone=og_heavy_api:10m rate=10r/s;
+    limit_req_zone $binary_remote_addr zone=og_static:10m rate=60r/s;
+    limit_req_zone $binary_remote_addr zone=og_health:10m rate=10r/s;
+
+    include /etc/angie/conf.d/acme-http.conf;
+
+    upstream ophthalmoguide_backend {
+        zone ophthalmoguide_backend 64k;
+        server backend:5190;
+    }
+
+
+    server {
+        listen 8080;
+        server_name _;
+        status_zone angie_metrics;
+
+        location = /metrics {
+            prometheus all;
+            allow 10.0.0.0/8;
+            allow 172.16.0.0/12;
+            allow 127.0.0.1;
+            deny all;
+        }
+    }
+
+    # MARKER_HTTP_REDIRECT_START
+    server {
+        listen 80;
+        listen [::]:80;
+        server_name __PUBLIC_HOST__;
+
+        location / {
+            return 301 https://$host$request_uri;
+        }
+    }
+    # MARKER_HTTP_REDIRECT_END
+
+    server {
+        # MARKER_ACME_HTTP_LISTEN
+        listen 443 ssl;
+        listen [::]:443 ssl;
+        http2 on;
+        server_name __PUBLIC_HOST__;
+
+        include /etc/angie/conf.d/ssl.conf;
+
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305;
+        ssl_prefer_server_ciphers on;
+        ssl_session_cache shared:SSL:10m;
+        ssl_session_timeout 1d;
+        ssl_session_tickets off;
+
+        status_zone angie_https;
+
+        root /usr/share/angie/html;
+        index index.html;
+
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://*; media-src 'self' blob:;" always;
+
+        rewrite ^/api$ /api/ permanent;
+
+        location ^~ /api/analyze {
+            limit_req zone=og_heavy_api burst=15 nodelay;
+            limit_req_status 429;
+            status_zone angie_api_analyze_proxy;
+            proxy_pass http://ophthalmoguide_backend;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host $host;
+            proxy_connect_timeout 10s;
+            proxy_read_timeout 90s;
+        }
+
+        location ^~ /api/ {
+            limit_req zone=og_api burst=30 nodelay;
+            limit_req_status 429;
+            status_zone angie_api_proxy;
+            proxy_pass http://ophthalmoguide_backend;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host $host;
+            proxy_connect_timeout 10s;
+            proxy_read_timeout 60s;
+        }
+
+		# location /swagger {
+        #     add_header Cache-Control "no-store, no-cache, must-revalidate, max-age=0" always;
+        #     add_header Pragma "no-cache" always;
+        #     add_header Expires "0" always;
+        #     proxy_pass http://ophthalmoguide_backend;
+        #     proxy_http_version 1.1;
+        #     proxy_set_header Host $host;
+        #     proxy_set_header X-Real-IP $remote_addr;
+        #     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        #     proxy_set_header X-Forwarded-Proto $scheme;
+        #     proxy_set_header X-Forwarded-Host $host;
+        # }
+        # 
+		# location /openapi {
+        #     add_header Cache-Control "no-store, no-cache, must-revalidate, max-age=0" always;
+        #     add_header Pragma "no-cache" always;
+        #     add_header Expires "0" always;
+        #     proxy_pass http://ophthalmoguide_backend;
+        #     proxy_http_version 1.1;
+        #     proxy_set_header Host $host;
+        #     proxy_set_header X-Real-IP $remote_addr;
+        #     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        #     proxy_set_header X-Forwarded-Proto $scheme;
+        #     proxy_set_header X-Forwarded-Host $host;
+        # }
+
+        location = /health {
+            limit_req zone=og_health burst=20 nodelay;
+            limit_req_status 429;
+            proxy_pass http://ophthalmoguide_backend;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host $host;
+        }
+
+        location ^~ /grafana/ {
+            status_zone angie_grafana_proxy;
+            proxy_pass http://grafana:3000;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host $host;
+            
+            # Rewrite both hosts in the OIDC redirect URL (the target and redirect_uri parameter) to the current requesting host
+            proxy_redirect ~^(https?://)[^:/]+(:9443/application/o/authorize/\?client_id=[^&]+&redirect_uri=https%3A%2F%2F)[^%]+(%2Fgrafana%2Flogin%2Fgeneric_oauth.*)$ $1$host$2$host$3;
+            
+            # Standard redirects (like grafana internal login page or self-redirects)
+            proxy_redirect ~^(https?://)[^:/]+:3000/(.*)$ https://$host/$2;
+            proxy_redirect ~^(https?://)[^:/]+/(.*)$ https://$host/$2;
+        }
+
+        location ^~ /admin {
+            limit_req zone=og_static burst=120 nodelay;
+            limit_req_status 429;
+            add_header Cache-Control "no-store, no-cache, must-revalidate, max-age=0" always;
+            add_header Pragma "no-cache" always;
+            add_header Expires "0" always;
+            try_files $uri $uri/ /index.html;
+        }
+
+        location / {
+            limit_req zone=og_static burst=120 nodelay;
+            limit_req_status 429;
+            try_files $uri $uri/ /index.html;
+        }
+    }
+}

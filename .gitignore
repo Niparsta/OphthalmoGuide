@@ -1,0 +1,131 @@
+# ========================================
+# ASP.NET Core / .NET
+# ========================================
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.pdb
+*.dll
+*.exe
+*.cache
+*.log
+*.vspscc
+*.vssscc
+
+# Visual Studio
+.vs/
+.vscode/
+*.opendb
+*.db
+
+# NuGet
+packages/
+*.nupkg
+paket-files/
+
+# .NET Core
+project.lock.json
+project.assets.json
+*.nuget.props
+*.nuget.targets
+
+# ========================================
+# Node.js / Vue.js / Frontend
+# ========================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+dist/
+dist-ssr/
+build/
+*.local
+.cache/
+.vite/
+
+# Environment variables (содержат секреты и пароли — не индексируются git)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+# Шаблон без секретов должен оставаться в репозитории
+!.env.example
+
+# ========================================
+# Python
+# ========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# ========================================
+# Общие правила
+# ========================================
+# OS
+.DS_Store
+Thumbs.db
+*.tmp
+*.temp
+
+# Logs
+logs/
+*.log
+log/
+
+# Coverage
+coverage/
+*.lcov
+*.coverage
+htmlcov/
+
+# Temporary folders
+tmp/
+temp/
+
+# Secrets & sensitive files
+secrets.json
+appsettings.Development.json
+*.key
+*.pem

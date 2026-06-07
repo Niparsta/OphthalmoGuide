@@ -1,0 +1,300 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        - VITE_AUTHENTIK_CLIENT_ID=${AUTHENTIK_CLIENT_ID}
+        - VITE_AUTHENTIK_ENABLED=${AUTHENTIK_ENABLED:-true}
+    container_name: ophthalmoguide_frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    expose:
+      - "8080"
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST}
+      TLS_MODE: ${TLS_MODE:-internal}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - angie_acme_data:/var/lib/angie/acme
+      - angie_certs_data:/var/lib/angie/certs
+    depends_on:
+      - backend
+      - dbx
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: ophthalmoguide_backend
+    expose:
+      - "5190"
+    environment:
+      TZ: Europe/Moscow
+      ASPNETCORE_URLS: "http://+:5190"
+      ConnectionStrings__DefaultConnection: "Host=postgres;Database=${APP_DB_NAME};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
+      Redis__ConnectionString: "valkey:6379,abortConnect=false"
+      Ollama__Url: "http://ollama:11434"
+      Ollama__Model: "qwen3.5:4b-q4_K_M"
+      Prometheus__Port: "8081"
+      Authentik__Enabled: "${AUTHENTIK_ENABLED:-true}"
+      Authentik__Authority: "http://authentik-server:9000/application/o/ophthalmoguide/"
+      Authentik__ClientId: "${AUTHENTIK_CLIENT_ID}"
+      Authentik__ClientSecret: "${AUTHENTIK_CLIENT_SECRET}"
+      Authentik__AdminGroup: "ophthalmoguide Admins"
+      Startup__FailOnErrors: "true"
+      Startup__RequireSeedData: "true"
+      SaluteSpeech__AuthorizationKey: "${SALUTESPEECH_AUTHORIZATION_KEY}"
+      SaluteSpeech__AllowInsecureTls: "false"
+    depends_on:
+      - postgres
+      - valkey
+      - ollama
+      - authentik-server
+    restart: unless-stopped
+
+  bot-workerservice:
+    build:
+      context: .
+      dockerfile: bot-workerservice/Dockerfile
+    container_name: ophthalmoguide_bot
+    environment:
+      Backend__Url: "http://backend:5190"
+      Redis__ConnectionString: "valkey:6379,abortConnect=false"
+      Telegram__Token: "${TELEGRAM_BOT_TOKEN:-}"
+      Telegram__AllowedUserIds: "${TELEGRAM_ALLOWED_USER_IDS:-}"
+      Vk__Token: "${VK_BOT_TOKEN:-}"
+      Vk__GroupId: "${VK_BOT_GROUP_ID:-0}"
+      Vk__AllowedUserIds: "${VK_ALLOWED_USER_IDS:-}"
+      Prometheus__Port: "8082"
+    depends_on:
+      - backend
+      - valkey
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ophthalmoguide_ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=-1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  ollama-model-preloader:
+    image: ollama/ollama:latest
+    container_name: ophthalmoguide_ollama_preloader
+    environment:
+      - OLLAMA_HOST=ollama
+    entrypoint: [ "/bin/sh", "-c" ]
+    command: >
+      "
+      echo 'Waiting for Ollama server...';
+      until ollama list > /dev/null 2>&1; do sleep 2; done;
+      echo 'Pulling model qwen3.5:4b-q4_K_M...';
+      ollama pull qwen3.5:4b-q4_K_M;
+      echo 'Preloading model into VRAM...';
+      ollama run qwen3.5:4b-q4_K_M '';
+      echo 'Preload complete!';
+      "
+    depends_on:
+      - ollama
+    restart: "no"
+
+  valkey:
+    image: valkey/valkey:latest
+    container_name: ophthalmoguide_valkey
+    volumes:
+      - valkey_data:/data
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:latest
+    container_name: ophthalmoguide_postgres
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - PGDATA=/var/lib/postgresql/data
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
+
+  authentik-server:
+    image: ghcr.io/goauthentik/server:2026.5.2
+    container_name: ophthalmoguide_authentik_server
+    command: server
+    environment:
+      AUTHENTIK_REDIS__HOST: valkey
+      AUTHENTIK_POSTGRESQL__HOST: postgres
+      AUTHENTIK_POSTGRESQL__USER: ${POSTGRES_USER}
+      AUTHENTIK_POSTGRESQL__NAME: ${AUTHENTIK_DB_NAME}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${POSTGRES_PASSWORD}
+      AUTHENTIK_SECRET_KEY: "${AUTHENTIK_SECRET_KEY}"
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+    ports:
+      - "9443:9443"
+    volumes:
+      - ./media:/media
+      - ./custom-templates:/templates
+    depends_on:
+      - postgres
+      - valkey
+    restart: unless-stopped
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:2026.5.2
+    container_name: ophthalmoguide_authentik_worker
+    command: worker
+    environment:
+      AUTHENTIK_REDIS__HOST: valkey
+      AUTHENTIK_POSTGRESQL__HOST: postgres
+      AUTHENTIK_POSTGRESQL__USER: ${POSTGRES_USER}
+      AUTHENTIK_POSTGRESQL__NAME: ${AUTHENTIK_DB_NAME}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${POSTGRES_PASSWORD}
+      AUTHENTIK_SECRET_KEY: "${AUTHENTIK_SECRET_KEY}"
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+    volumes:
+      - ./media:/media
+      - ./custom-templates:/templates
+    depends_on:
+      - postgres
+      - valkey
+      - authentik-server
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ophthalmoguide_prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.external-url=https://localhost/prometheus/'
+      - '--web.route-prefix=/prometheus/'
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus     
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ophthalmoguide_grafana
+    expose:
+      - "3000"
+    volumes:
+      - ./monitoring/grafana/provisioning/datasources/datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml:ro
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=true
+      - GF_SERVER_ROOT_URL=https://${PUBLIC_HOST}/grafana/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_AUTH_GENERIC_OAUTH_ENABLED=true
+      - GF_AUTH_GENERIC_OAUTH_NAME=Authentik
+      - GF_AUTH_GENERIC_OAUTH_ALLOW_SIGN_UP=true
+      - GF_AUTH_GENERIC_OAUTH_CLIENT_ID=${GRAFANA_CLIENT_ID}
+      - GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET=${GRAFANA_CLIENT_SECRET}
+      - GF_AUTH_GENERIC_OAUTH_SCOPES=openid profile email
+      - GF_AUTH_GENERIC_OAUTH_AUTH_URL=https://${PUBLIC_HOST}:9443/application/o/authorize/
+      - GF_AUTH_GENERIC_OAUTH_TOKEN_URL=http://authentik-server:9000/application/o/token/
+      - GF_AUTH_GENERIC_OAUTH_API_URL=http://authentik-server:9000/application/o/userinfo/
+      - GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH=contains(groups[*], 'grafana_admins') && 'Admin' || contains(groups[*], 'grafana_editors') && 'Editor' || 'Viewer'
+      - GF_AUTH_GENERIC_OAUTH_TLS_SKIP_VERIFY_INSECURE=true
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: ophthalmoguide_cadvisor
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:latest
+    container_name: ophthalmoguide_loki
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki_data:/loki
+    restart: unless-stopped
+
+  promtail:
+    image: grafana/promtail:latest
+    container_name: ophthalmoguide_promtail
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./monitoring/promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: ophthalmoguide_redis_exporter
+    environment:
+      - REDIS_ADDR=redis://valkey:6379
+    depends_on:
+      - valkey
+    restart: unless-stopped
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: ophthalmoguide_postgres_exporter
+    environment:
+      DATA_SOURCE_URI: "postgres:5432/${POSTGRES_DB}?sslmode=disable"
+      DATA_SOURCE_USER: "${POSTGRES_USER}"
+      DATA_SOURCE_PASS: "${POSTGRES_PASSWORD}"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  dbx:
+    image: t8y2/dbx:latest
+    container_name: ophthalmoguide_dbx
+    ports:
+      - "4224:4224"
+    volumes:
+      - dbx_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
+    name: ophthalmoguide_ollama_data
+  valkey_data:
+    name: ophthalmoguide_valkey_data
+  postgres_data:
+    name: ophthalmoguide_postgres_data
+  angie_acme_data:
+    name: ophthalmoguide_angie_acme_data
+  angie_certs_data:
+    name: ophthalmoguide_angie_certs_data
+  prometheus_data:
+    name: ophthalmoguide_prometheus_data
+  grafana_data:
+    name: ophthalmoguide_grafana_data
+  loki_data:
+    name: ophthalmoguide_loki_data
+  dbx_data:
+    name: ophthalmoguide_dbx_data

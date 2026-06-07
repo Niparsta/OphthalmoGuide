@@ -1,0 +1,416 @@
+{
+  "symptoms": [
+    "Ухудшение зрения вдаль",
+    "Ухудшение зрения вблизи",
+    "Размытость зрения",
+    "Искажение прямых линий (метаморфопсия)",
+    "Двоение в глазах (диплопия)",
+    "Снижение остроты зрения",
+    "Пелена перед глазами",
+    "Туман перед глазами",
+    "Плавающие помутнения (мушки)",
+    "Вспышки света (фотопсии)",
+    "Сужение поля зрения",
+    "Выпадение участков поля зрения",
+    "Гало вокруг источников света",
+    "Светобоязнь",
+    "Ухудшение зрения в темноте",
+    "Быстрая зрительная утомляемость",
+    "Боль в глазах",
+    "Резь в глазах",
+    "Жжение в глазах",
+    "Зуд глаз и век",
+    "Ощущение песка или инородного тела",
+    "Головная боль",
+    "Покраснение глаз",
+    "Покраснение век",
+    "Отек век",
+    "Отек конъюнктивы",
+    "Слезотечение",
+    "Выделения из глаз",
+    "Сухость глаз",
+    "Склеивание ресниц",
+    "Корочки на веках",
+    "Шелушение кожи век",
+    "Опущение века",
+    "Избыток кожи век",
+    "Уплотнение на веке",
+    "Боль при пальпации века",
+    "Помутнение роговицы",
+    "Боль при моргании",
+    "Ощущение царапания на роговице",
+    "Внезапная потеря зрения",
+    "Тень или завеса в поле зрения",
+    "Центральная скотома",
+    "Периферическая скотома",
+    "Косоглазие (отклонение глаза)",
+    "Слезостояние и гной из слезной точки",
+    "Боль в области слезного мешка",
+    "Ограничение подвижности глаза",
+    "Астенопия",
+    "Нарушение цветового зрения",
+    "Необходимость щуриться",
+    "Необходимость отодвигать текст",
+    "Необходимость яркого освещения",
+    "Головокружение",
+    "Тошнота",
+    "Узкий зрачок",
+    "Расширенный зрачок"
+  ],
+  "diseases": [
+    {
+      "name": "Миопия",
+      "threatLevel": 1,
+      "symptoms": [
+        { "name": "Ухудшение зрения вдаль", "redFlag": false },
+        { "name": "Размытость зрения", "redFlag": false },
+        { "name": "Снижение остроты зрения", "redFlag": false },
+        { "name": "Ухудшение зрения в темноте", "redFlag": false },
+        { "name": "Быстрая зрительная утомляемость", "redFlag": false },
+        { "name": "Головная боль", "redFlag": false },
+        { "name": "Необходимость щуриться", "redFlag": false }
+      ]
+    },
+    {
+      "name": "Пресбиопия",
+      "threatLevel": 1,
+      "symptoms": [
+        { "name": "Ухудшение зрения вблизи", "redFlag": false },
+        { "name": "Размытость зрения", "redFlag": false },
+        { "name": "Снижение остроты зрения", "redFlag": false },
+        { "name": "Быстрая зрительная утомляемость", "redFlag": false },
+        { "name": "Головная боль", "redFlag": false },
+        { "name": "Необходимость отодвигать текст", "redFlag": false },
+        { "name": "Необходимость яркого освещения", "redFlag": false }
+      ]
+    },
+    {
+      "name": "Катаракта",
+      "threatLevel": 2,
+      "symptoms": [
+        { "name": "Размытость зрения", "redFlag": false },
+        { "name": "Снижение остроты зрения", "redFlag": false },
+        { "name": "Пелена перед глазами", "redFlag": false },
+        { "name": "Туман перед глазами", "redFlag": false },
+        { "name": "Гало вокруг источников света", "redFlag": false },
+        { "name": "Светобоязнь", "redFlag": false },
+        { "name": "Быстрая зрительная утомляемость", "redFlag": false },
+        { "name": "Головная боль", "redFlag": false },
+        { "name": "Необходимость яркого освещения", "redFlag": false }
+      ]
+    },
+    {
+      "name": "Аллергический конъюнктивит",
+      "threatLevel": 2,
+      "symptoms": [
+        { "name": "Жжение в глазах", "redFlag": false },
+        { "name": "Зуд глаз и век", "redFlag": false },
+        { "name": "Ощущение песка или инородного тела", "redFlag": false },
+        { "name": "Покраснение глаз", "redFlag": false },
+        { "name": "Отек век", "redFlag": false },
+        { "name": "Слезотечение", "redFlag": false },
+        { "name": "Выделения из глаз", "redFlag": false }
+      ]
+    },
+    {
+      "name": "Инфекционный конъюнктивит",
+      "threatLevel": 2,
+      "symptoms": [
+        { "name": "Резь в глазах", "redFlag": false },
+        { "name": "Жжение в глазах", "redFlag": false },
+        { "name": "Покраснение глаз", "redFlag": false },
+        { "name": "Отек конъюнктивы", "redFlag": false },
+        { "name": "Слезотечение", "redFlag": false },
+        { "name": "Выделения из глаз", "redFlag": false },
+        { "name": "Склеивание ресниц", "redFlag": false }
+      ]
+    },
+    {
+      "name": "Синдром сухого глаза (сухой кератоконъюнктивит)",
+      "threatLevel": 2,
+      "symptoms": [
+        { "name": "Светобоязнь", "redFlag": false },
+        { "name": "Быстрая зрительная утомляемость", "redFlag": false },
+        { "name": "Боль в глазах", "redFlag": false },
+        { "name": "Резь в глазах", "redFlag": false },
+        { "name": "Жжение в глазах", "redFlag": false },
+        { "name": "Ощущение песка или инородного тела", "redFlag": false },
+        { "name": "Покраснение глаз", "redFlag": false },
+        { "name": "Слезотечение", "redFlag": false },
+        { "name": "Сухость глаз", "redFlag": false }
+      ]
+    },
+    {
+      "name": "Блефарит",
+      "threatLevel": 2,
+      "symptoms": [
+        { "name": "Жжение в глазах", "redFlag": false },
+        { "name": "Зуд глаз и век", "redFlag": false },
+        { "name": "Ощущение песка или инородного тела", "redFlag": false },
+        { "name": "Покраснение век", "redFlag": false },
+        { "name": "Склеивание ресниц", "redFlag": false },
+        { "name": "Корочки на веках", "redFlag": false },
+        { "name": "Шелушение кожи век", "redFlag": false }
+      ]
+    },
+    {
+      "name": "Глаукома",
+      "threatLevel": 3,
+      "symptoms": [
+        { "name": "Снижение остроты зрения", "redFlag": false },
+        { "name": "Пелена перед глазами", "redFlag": false },
+        { "name": "Сужение поля зрения", "redFlag": true },
+        { "name": "Гало вокруг источников света", "redFlag": true },
+        { "name": "Светобоязнь", "redFlag": false },
+        { "name": "Ухудшение зрения в темноте", "redFlag": false },
+        { "name": "Боль в глазах", "redFlag": true },
+        { "name": "Головная боль", "redFlag": true },
+        { "name": "Тошнота", "redFlag": true },
+        { "name": "Расширенный зрачок", "redFlag": true }
+      ]
+    },
+    {
+      "name": "Астигматизм",
+      "threatLevel": 1,
+      "symptoms": [
+        { "name": "Размытость зрения", "redFlag": false },
+        { "name": "Искажение прямых линий (метаморфопсия)", "redFlag": false },
+        { "name": "Двоение в глазах (диплопия)", "redFlag": false },
+        { "name": "Снижение остроты зрения", "redFlag": false },
+        { "name": "Быстрая зрительная утомляемость", "redFlag": false },
+        { "name": "Головная боль", "redFlag": false },
+        { "name": "Необходимость щуриться", "redFlag": false }
+      ]
+    },
+    {
+      "name": "Гиперметропия",
+      "threatLevel": 1,
+      "symptoms": [
+        { "name": "Ухудшение зрения вблизи", "redFlag": false },
+        { "name": "Снижение остроты зрения", "redFlag": false },
+        { "name": "Быстрая зрительная утомляемость", "redFlag": false },
+        { "name": "Головная боль", "redFlag": false },
+        { "name": "Астенопия", "redFlag": false },
+        { "name": "Необходимость отодвигать текст", "redFlag": false }
+      ]
+    },
+    {
+      "name": "Птеригиум и пингвекула",
+      "threatLevel": 1,
+      "symptoms": [
+        { "name": "Светобоязнь", "redFlag": false },
+        { "name": "Жжение в глазах", "redFlag": false },
+        { "name": "Ощущение песка или инородного тела", "redFlag": false },
+        { "name": "Покраснение глаз", "redFlag": false },
+        { "name": "Слезотечение", "redFlag": false },
+        { "name": "Помутнение роговицы", "redFlag": false }
+      ]
+    },
+    {
+      "name": "Халязион",
+      "threatLevel": 2,
+      "symptoms": [
+        { "name": "Ощущение песка или инородного тела", "redFlag": false },
+        { "name": "Покраснение век", "redFlag": false },
+        { "name": "Отек век", "redFlag": false },
+        { "name": "Слезотечение", "redFlag": false },
+        { "name": "Уплотнение на веке", "redFlag": false },
+        { "name": "Боль при пальпации века", "redFlag": false }
+      ]
+    },
+    {
+      "name": "Ячмень (гордеолум)",
+      "threatLevel": 2,
+      "symptoms": [
+        { "name": "Жжение в глазах", "redFlag": false },
+        { "name": "Покраснение глаз", "redFlag": false },
+        { "name": "Покраснение век", "redFlag": false },
+        { "name": "Отек век", "redFlag": false },
+        { "name": "Слезотечение", "redFlag": false },
+        { "name": "Уплотнение на веке", "redFlag": false },
+        { "name": "Боль при пальпации века", "redFlag": false }
+      ]
+    },
+    {
+      "name": "Кератит",
+      "threatLevel": 3,
+      "symptoms": [
+        { "name": "Снижение остроты зрения", "redFlag": false },
+        { "name": "Светобоязнь", "redFlag": true },
+        { "name": "Боль в глазах", "redFlag": true },
+        { "name": "Покраснение глаз", "redFlag": false },
+        { "name": "Слезотечение", "redFlag": false },
+        { "name": "Помутнение роговицы", "redFlag": true },
+        { "name": "Боль при моргании", "redFlag": false },
+        { "name": "Ощущение царапания на роговице", "redFlag": true }
+      ]
+    },
+    {
+      "name": "Возрастная макулярная дегенерация (ВМД)",
+      "threatLevel": 2,
+      "symptoms": [
+        { "name": "Размытость зрения", "redFlag": false },
+        { "name": "Искажение прямых линий (метаморфопсия)", "redFlag": true },
+        { "name": "Снижение остроты зрения", "redFlag": false },
+        { "name": "Пелена перед глазами", "redFlag": false },
+        { "name": "Светобоязнь", "redFlag": false },
+        { "name": "Центральная скотома", "redFlag": true },
+        { "name": "Нарушение цветового зрения", "redFlag": false }
+      ]
+    },
+    {
+      "name": "Диабетическая ретинопатия",
+      "threatLevel": 2,
+      "symptoms": [
+        { "name": "Размытость зрения", "redFlag": false },
+        { "name": "Снижение остроты зрения", "redFlag": false },
+        { "name": "Пелена перед глазами", "redFlag": false },
+        { "name": "Плавающие помутнения (мушки)", "redFlag": false },
+        { "name": "Вспышки света (фотопсии)", "redFlag": true },
+        { "name": "Выпадение участков поля зрения", "redFlag": true },
+        { "name": "Внезапная потеря зрения", "redFlag": true }
+      ]
+    },
+    {
+      "name": "Задняя отслойка стекловидного тела (ЗОСТ)",
+      "threatLevel": 2,
+      "symptoms": [
+        { "name": "Размытость зрения", "redFlag": false },
+        { "name": "Двоение в глазах (диплопия)", "redFlag": false },
+        { "name": "Плавающие помутнения (мушки)", "redFlag": false },
+        { "name": "Вспышки света (фотопсии)", "redFlag": true },
+        { "name": "Внезапная потеря зрения", "redFlag": true },
+        { "name": "Тень или завеса в поле зрения", "redFlag": true }
+      ]
+    },
+    {
+      "name": "Субконъюнктивальное кровоизлияние",
+      "threatLevel": 2,
+      "symptoms": [
+        { "name": "Жжение в глазах", "redFlag": false },
+        { "name": "Покраснение глаз", "redFlag": false },
+        { "name": "Слезотечение", "redFlag": false }
+      ]
+    },
+    {
+      "name": "Инородное тело роговицы / поверхностная травма роговицы",
+      "threatLevel": 3,
+      "symptoms": [
+        { "name": "Светобоязнь", "redFlag": true },
+        { "name": "Боль в глазах", "redFlag": true },
+        { "name": "Ощущение песка или инородного тела", "redFlag": false },
+        { "name": "Покраснение глаз", "redFlag": false },
+        { "name": "Слезотечение", "redFlag": false },
+        { "name": "Боль при моргании", "redFlag": true }
+      ]
+    },
+    {
+      "name": "Косоглазие (страбизм)",
+      "threatLevel": 1,
+      "symptoms": [
+        { "name": "Двоение в глазах (диплопия)", "redFlag": true },
+        { "name": "Головная боль", "redFlag": false },
+        { "name": "Косоглазие (отклонение глаза)", "redFlag": false },
+        { "name": "Ограничение подвижности глаза", "redFlag": false },
+        { "name": "Астенопия", "redFlag": false },
+        { "name": "Головокружение", "redFlag": false }
+      ]
+    },
+    {
+      "name": "Дакриоцистит / непроходимость слёзных путей",
+      "threatLevel": 2,
+      "symptoms": [
+        { "name": "Отек век", "redFlag": false },
+        { "name": "Слезотечение", "redFlag": false },
+        { "name": "Слезостояние и гной из слезной точки", "redFlag": true },
+        { "name": "Боль в области слезного мешка", "redFlag": false }
+      ]
+    },
+    {
+      "name": "Увеит / иридоциклит",
+      "threatLevel": 3,
+      "symptoms": [
+        { "name": "Пелена перед глазами", "redFlag": false },
+        { "name": "Светобоязнь", "redFlag": true },
+        { "name": "Боль в глазах", "redFlag": true },
+        { "name": "Головная боль", "redFlag": false },
+        { "name": "Покраснение глаз", "redFlag": false },
+        { "name": "Слезотечение", "redFlag": false },
+        { "name": "Тошнота", "redFlag": false },
+        { "name": "Узкий зрачок", "redFlag": true }
+      ]
+    },
+    {
+      "name": "Отслойка сетчатки",
+      "threatLevel": 3,
+      "symptoms": [
+        { "name": "Снижение остроты зрения", "redFlag": false },
+        { "name": "Плавающие помутнения (мушки)", "redFlag": false },
+        { "name": "Вспышки света (фотопсии)", "redFlag": true },
+        { "name": "Сужение поля зрения", "redFlag": true },
+        { "name": "Внезапная потеря зрения", "redFlag": true },
+        { "name": "Тень или завеса в поле зрения", "redFlag": true }
+      ]
+    },
+    {
+      "name": "Птоз века",
+      "threatLevel": 1,
+      "symptoms": [
+        { "name": "Головная боль", "redFlag": false },
+        { "name": "Опущение века", "redFlag": false },
+        { "name": "Астенопия", "redFlag": false }
+      ]
+    },
+    {
+      "name": "Дерматохалазис (избыток кожи век)",
+      "threatLevel": 1,
+      "symptoms": [
+        { "name": "Покраснение век", "redFlag": false },
+        { "name": "Избыток кожи век", "redFlag": false },
+        { "name": "Астенопия", "redFlag": false }
+      ]
+    },
+    {
+      "name": "Рубцы роговицы",
+      "threatLevel": 1,
+      "symptoms": [
+        { "name": "Снижение остроты зрения", "redFlag": false },
+        { "name": "Светобоязнь", "redFlag": false },
+        { "name": "Ощущение песка или инородного тела", "redFlag": false },
+        { "name": "Помутнение роговицы", "redFlag": true }
+      ]
+    },
+    {
+      "name": "Амблиопия",
+      "threatLevel": 1,
+      "symptoms": [
+        { "name": "Снижение остроты зрения", "redFlag": false },
+        { "name": "Косоглазие (отклонение глаза)", "redFlag": false },
+        { "name": "Астенопия", "redFlag": false }
+      ]
+    },
+    {
+      "name": "Трахома",
+      "threatLevel": 2,
+      "symptoms": [
+        { "name": "Снижение остроты зрения", "redFlag": false },
+        { "name": "Светобоязнь", "redFlag": false },
+        { "name": "Резь в глазах", "redFlag": false },
+        { "name": "Зуд глаз и век", "redFlag": false },
+        { "name": "Ощущение песка или инородного тела", "redFlag": false },
+        { "name": "Покраснение глаз", "redFlag": false },
+        { "name": "Покраснение век", "redFlag": false },
+        { "name": "Отек век", "redFlag": false },
+        { "name": "Слезотечение", "redFlag": false },
+        { "name": "Выделения из глаз", "redFlag": false },
+        { "name": "Помутнение роговицы", "redFlag": true },
+        { "name": "Ощущение царапания на роговице", "redFlag": true }
+      ]
+    },
+    {
+      "name": "Здоровый",
+      "threatLevel": 0,
+      "symptoms": []
+    }
+  ]
+}
