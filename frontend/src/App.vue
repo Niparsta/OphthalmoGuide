@@ -550,9 +550,9 @@ async function refreshAdminToken(): Promise<boolean> {
       if (res.ok) {
         const data = await res.json()
         if (data.access_token) {
-          setCookie('admin_token', data.access_token, getTokenMaxAge(data.access_token))
+          setCookie('admin_token', data.access_token)
           if (data.refresh_token) {
-            setCookie('admin_refresh_token', data.refresh_token, 30 * 24 * 60 * 60)
+            setCookie('admin_refresh_token', data.refresh_token)
           }
           return true
         }
@@ -667,9 +667,9 @@ async function handleAuthentikCallback() {
     if (res.ok) {
       const data = await res.json()
       if (data.access_token) {
-        setCookie('admin_token', data.access_token, getTokenMaxAge(data.access_token))
+        setCookie('admin_token', data.access_token)
         if (data.refresh_token) {
-          setCookie('admin_refresh_token', data.refresh_token, 30 * 24 * 60 * 60)
+          setCookie('admin_refresh_token', data.refresh_token)
         }
         sessionStorage.removeItem(OAUTH_REDIRECT_URI_KEY)
         window.location.replace(`${window.location.origin}/admin/`)
