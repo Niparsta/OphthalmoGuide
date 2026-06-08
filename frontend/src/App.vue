@@ -472,6 +472,106 @@ function buildAuthentikLogoutUrl(): string | null {
   return `${base}/flows/-/default/invalidation/?${params.toString()}`
 }
 
+function getCookie(name: string): string | null {
+  const nameEQ = name + "="
+  const ca = document.cookie.split(';')
+  for (const item of ca) {
+    const c = item.trim()
+    if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length)
+  }
+  return null
+}
+
+function setCookie(name: string, value: string, maxAgeSeconds?: number) {
+  let cookieString = `${name}=${value}; Path=/; SameSite=Lax; Secure`
+  if (typeof maxAgeSeconds === 'number') {
+    cookieString += `; Max-Age=${maxAgeSeconds}`
+  }
+  document.cookie = cookieString
+}
+
+function deleteCookie(name: string) {
+  document.cookie = `${name}=; Path=/; SameSite=Lax; Secure; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0`
+}
+
+function getTokenMaxAge(token: string): number {
+  try {
+    const base64Url = token.split('.')[1]
+    if (!base64Url) return 3600
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+    const jsonPayload = decodeURIComponent(window.atob(base64).split('').map(function(c) {
+      return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
+    }).join(''))
+    const payload = JSON.parse(jsonPayload)
+    if (!payload.exp) return 3600
+    const remaining = Math.floor(payload.exp - Date.now() / 1000)
+    return remaining > 0 ? remaining : 0
+  } catch {
+    return 3600
+  }
+}
+
+function isTokenExpired(token: string): boolean {
+  try {
+    const base64Url = token.split('.')[1]
+    if (!base64Url) return true
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+    const jsonPayload = decodeURIComponent(window.atob(base64).split('').map(function(c) {
+      return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
+    }).join(''))
+    const payload = JSON.parse(jsonPayload)
+    if (!payload.exp) return false
+    return Date.now() / 1000 >= payload.exp - 10
+  } catch {
+    return true
+  }
+}
+
+let isRefreshingPromise: Promise<boolean> | null = null
+
+async function refreshAdminToken(): Promise<boolean> {
+  const refreshToken = getCookie('admin_refresh_token')
+  if (!refreshToken) {
+    return false
+  }
+
+  if (isRefreshingPromise) {
+    return isRefreshingPromise
+  }
+
+  isRefreshingPromise = (async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken })
+      })
+
+      if (res.ok) {
+        const data = await res.json()
+        if (data.access_token) {
+          setCookie('admin_token', data.access_token, getTokenMaxAge(data.access_token))
+          if (data.refresh_token) {
+            setCookie('admin_refresh_token', data.refresh_token, 30 * 24 * 60 * 60)
+          }
+          return true
+        }
+      }
+    } catch (e) {
+      console.error('[OIDC] Failed to refresh token:', e)
+    }
+    
+    clearAdminSession()
+    return false
+  })()
+
+  try {
+    return await isRefreshingPromise
+  } finally {
+    isRefreshingPromise = null
+  }
+}
+
 async function redirectToAuthentik() {
   if (!authConfig.value) {
     await fetchConfig()
@@ -484,7 +584,7 @@ async function redirectToAuthentik() {
       client_id: authConfig.value.clientId,
       redirect_uri: redirectUri,
       response_type: 'code',
-      scope: 'openid profile email',
+      scope: 'openid profile email offline_access',
       state: 'admin',
     })
     window.location.assign(`${authorityBase}/application/o/authorize/?${params.toString()}`)
@@ -492,8 +592,8 @@ async function redirectToAuthentik() {
 }
 
 function clearAdminSession() {
-  localStorage.removeItem('admin_token')
-  localStorage.removeItem('admin_id_token')
+  deleteCookie('admin_token')
+  deleteCookie('admin_refresh_token')
   isAdmin.value = false
   isAdminUnauthorized.value = false
   adminBootstrapLoading.value = false
@@ -548,8 +648,8 @@ async function handleAuthentikCallback() {
   if (!code) return
 
   // Старый просроченный токен не должен мешать обмену authorization code.
-  localStorage.removeItem('admin_token')
-  localStorage.removeItem('admin_id_token')
+  deleteCookie('admin_token')
+  deleteCookie('admin_refresh_token')
 
   if (state !== 'admin') {
     showNotification('Не удалось войти. Попробуйте ещё раз.', 'error')
@@ -567,9 +667,9 @@ async function handleAuthentikCallback() {
     if (res.ok) {
       const data = await res.json()
       if (data.access_token) {
-        localStorage.setItem('admin_token', data.access_token)
-        if (data.id_token) {
-          localStorage.setItem('admin_id_token', data.id_token)
+        setCookie('admin_token', data.access_token, getTokenMaxAge(data.access_token))
+        if (data.refresh_token) {
+          setCookie('admin_refresh_token', data.refresh_token, 30 * 24 * 60 * 60)
         }
         sessionStorage.removeItem(OAUTH_REDIRECT_URI_KEY)
         window.location.replace(`${window.location.origin}/admin/`)
@@ -593,13 +693,18 @@ async function logoutAdmin() {
     await fetchConfig()
   }
 
-  const token = localStorage.getItem('admin_token')
+  const token = getCookie('admin_token')
+  const refreshToken = getCookie('admin_refresh_token')
 
   if (token) {
     try {
       await fetch(`${API_BASE}/api/auth/logout`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ refreshToken })
       })
     } catch {
       // logout notification to backend is best-effort
@@ -608,23 +713,23 @@ async function logoutAdmin() {
 
   clearAdminSession()
   sessionStorage.removeItem(OAUTH_REDIRECT_URI_KEY)
-
-  const logoutUrl = buildAuthentikLogoutUrl()
-  if (logoutUrl) {
-    window.location.href = logoutUrl
-  } else {
-    window.location.href = '/'
-  }
+  sessionStorage.setItem('logged_out_notification', 'true')
+  window.location.href = '/'
 }
 
 /** Лёгкая проверка сессии без перезагрузки базы знаний и без сброса UI. */
 async function validateAdminSessionOnly() {
   if (!isAdmin.value || !isAdminPath() || isOAuthCallbackPending()) return
 
-  const token = localStorage.getItem('admin_token')
-  if (!token) {
-    exitAdminAfterSessionLoss('Сессия истекла – авторизуйтесь повторно')
-    return
+  let token = getCookie('admin_token')
+  if (!token || isTokenExpired(token)) {
+    const ok = await refreshAdminToken()
+    if (ok) {
+      token = getCookie('admin_token')
+    } else {
+      exitAdminAfterSessionLoss('Сессия истекла – авторизуйтесь повторно')
+      return
+    }
   }
 
   try {
@@ -687,22 +792,41 @@ async function checkAdminRoute(options: { userInitiated?: boolean } = {}) {
         return
       }
 
-      const token = localStorage.getItem('admin_token')
+      const token = getCookie('admin_token')
       if (!token) {
         if (code) {
           onAdminRoute.value = true
           return // Let handleAuthentikCallback handle it
         }
 
-        if (!authConfig.value) {
-          await fetchConfig()
+        if (urlParams.get('login') === 'true') {
+          if (!authConfig.value) {
+            await fetchConfig()
+          }
+          if (authConfig.value?.enabled) {
+            redirectToAuthentik()
+          } else {
+            await enterDemoAdminMode()
+          }
+          return
         }
-        if (authConfig.value?.enabled) {
-          redirectToAuthentik()
-        } else {
-          await enterDemoAdminMode()
-        }
+
+        onAdminRoute.value = true
+        showUnauthorizedPage()
         return
+      }
+      
+      let activeToken = token
+      if (isTokenExpired(token)) {
+        const ok = await refreshAdminToken()
+        if (ok) {
+          activeToken = getCookie('admin_token') || ''
+        } else {
+          clearAdminSession()
+          onAdminRoute.value = true
+          showUnauthorizedPage()
+          return
+        }
       }
       
       // Validate token against a lightweight AdminOnly endpoint
@@ -710,7 +834,7 @@ async function checkAdminRoute(options: { userInitiated?: boolean } = {}) {
         adminBootstrapLoading.value = true
         const res = await fetch(`${API_BASE}/api/admin/session`, {
           headers: {
-            'Authorization': `Bearer ${token}`
+            'Authorization': `Bearer ${activeToken}`
           }
         })
         if (!res.ok) {
@@ -719,14 +843,7 @@ async function checkAdminRoute(options: { userInitiated?: boolean } = {}) {
             showForbiddenPage()
           } else if (res.status === 401) {
             clearAdminSession()
-            if (!authConfig.value) {
-              await fetchConfig()
-            }
-            if (authConfig.value?.enabled) {
-              redirectToAuthentik()
-            } else {
-              await enterDemoAdminMode()
-            }
+            showUnauthorizedPage()
           } else {
             exitAdminAfterSessionLoss('Сессия истекла – авторизуйтесь повторно')
           }
@@ -776,7 +893,20 @@ function initSession() {
 
 // Global API Fetch helper with headers
 async function apiFetch(endpoint: string, options: Omit<RequestInit, 'body'> & { body?: any } = {}) {
-  const token = localStorage.getItem('admin_token')
+  let token = getCookie('admin_token')
+  
+  if (token && (isAdmin.value || isAdminUnauthorized.value || isAdminPath())) {
+    if (isTokenExpired(token)) {
+      const ok = await refreshAdminToken()
+      if (ok) {
+        token = getCookie('admin_token')
+      } else {
+        showUnauthorizedPage()
+        throw new Error('session_expired')
+      }
+    }
+  }
+
   const headers: Record<string, string> = {
     'Session-Id': sessionId.value,
     ...(options.headers as Record<string, string> || {})
@@ -1854,6 +1984,12 @@ function onPopState() {
 }
 
 onMounted(async () => {
+  const loggedOut = sessionStorage.getItem('logged_out_notification')
+  if (loggedOut) {
+    showNotification('Вы успешно вышли из системы', 'success')
+    sessionStorage.removeItem('logged_out_notification')
+  }
+
   mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
   isDark.value = mediaQuery.matches
   mediaQuery.addEventListener('change', updateTheme)

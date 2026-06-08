@@ -18,10 +18,6 @@ services:
     volumes:
       - angie_acme_data:/var/lib/angie/acme
       - angie_certs_data:/var/lib/angie/certs
-    depends_on:
-      - backend
-      - dbx
-      - grafana
     restart: unless-stopped
 
   backend:
@@ -53,6 +49,12 @@ services:
       - valkey
       - ollama
       - authentik-server
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5190/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
 
   bot-workerservice:
@@ -89,26 +91,6 @@ services:
               count: all
               capabilities: [gpu]
     restart: unless-stopped
-
-  ollama-model-preloader:
-    image: ollama/ollama:latest
-    container_name: ophthalmoguide_ollama_preloader
-    environment:
-      - OLLAMA_HOST=ollama
-    entrypoint: [ "/bin/sh", "-c" ]
-    command: >
-      "
-      echo 'Waiting for Ollama server...';
-      until ollama list > /dev/null 2>&1; do sleep 2; done;
-      echo 'Pulling model qwen3.5:4b-q4_K_M...';
-      ollama pull qwen3.5:4b-q4_K_M;
-      echo 'Preloading model into VRAM...';
-      ollama run qwen3.5:4b-q4_K_M '';
-      echo 'Preload complete!';
-      "
-    depends_on:
-      - ollama
-    restart: "no"
 
   valkey:
     image: valkey/valkey:latest
@@ -148,6 +130,7 @@ services:
     volumes:
       - ./media:/media
       - ./custom-templates:/templates
+      - ./media/authentik-vivid-blurred-background.jpg:/web/dist/assets/images/authentik-vivid-blurred-background.jpg
     depends_on:
       - postgres
       - valkey

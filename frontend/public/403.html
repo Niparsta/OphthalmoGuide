@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Доступ ограничен (403) | OphthalmoGuide</title>
+    <title>Доступ ограничен | OphthalmoGuide</title>
     <style>
         :root {
             --bg-app: #f6f8fa;
@@ -291,8 +291,8 @@
                             <line x1="12" y1="16" x2="12.01" y2="16"></line>
                         </svg>
                     </div>
-                    <h2 class="admin-access-denied-title">Доступ ограничен</h2>
-                    <p class="admin-access-denied-text">Вам не выписали рецепт для просмотра этого раздела.</p>
+                    <h2 class="admin-access-denied-title">Это Вам не аскорбинка</h2>
+                    <p class="admin-access-denied-text">Наш серверный провизор смерил Вас подозрительным взглядом: такие сильнодействующие данные без рецепта с тремя печатями не отпускаются.</p>
                 </div>
                 
                 <div class="actions-row">
@@ -304,10 +304,25 @@
     </div>
     <script>
         (function() {
+            function getCookie(name) {
+                const nameEQ = name + "=";
+                const ca = document.cookie.split(';');
+                for (let i = 0; i < ca.length; i++) {
+                    let c = ca[i].trim();
+                    if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
+                }
+                return null;
+            }
+            
+            function deleteCookie(name) {
+                document.cookie = name + '=; Path=/; SameSite=Lax; Secure; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0';
+            }
+
             const logoutBtn = document.getElementById('logout-btn');
             if (logoutBtn) {
                 logoutBtn.addEventListener('click', () => {
-                    const token = localStorage.getItem('admin_token');
+                    const token = getCookie('admin_token');
+                    const refreshToken = getCookie('admin_refresh_token');
                     const apiBase = (window.location.hostname === 'localhost' && window.location.port === '5173') 
                         ? 'http://localhost:5190' 
                         : '';
@@ -315,19 +330,20 @@
                     if (token) {
                         fetch(`${apiBase}/api/auth/logout`, {
                             method: 'POST',
-                            headers: { 'Authorization': `Bearer ${token}` },
+                            headers: { 
+                                'Authorization': `Bearer ${token}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ refreshToken }),
                             keepalive: true
                         }).catch(() => {});
                     }
-                    localStorage.removeItem('admin_token');
-                    localStorage.removeItem('admin_id_token');
+                    deleteCookie('admin_token');
+                    deleteCookie('admin_refresh_token');
                     sessionStorage.removeItem('oauth_redirect_uri');
+                    sessionStorage.setItem('logged_out_notification', 'true');
                     
-                    const currentHost = window.location.hostname;
-                    const isHttps = window.location.protocol === 'https:';
-                    const base = isHttps ? `https://${currentHost}:9443` : `http://${currentHost}:9000`;
-                    const nextUrl = encodeURIComponent(window.location.origin + '/');
-                    window.location.href = `${base}/flows/-/default/invalidation/?next=${nextUrl}`;
+                    window.location.href = '/';
                 });
             }
         })();
