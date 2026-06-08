@@ -1887,7 +1887,7 @@ onUnmounted(() => {
   <!-- Connection Status Banner -->
   <Transition name="slide-down">
     <div v-if="!isOnline" class="offline-banner" role="alert">
-      <span class="offline-banner-icon">
+      <span class="offline-banner-icon offline-banner-icon--pulse">
         <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M12 20h.01" />
           <path d="M8.5 16.429a5 5 0 0 1 7 0" />
@@ -1901,9 +1901,9 @@ onUnmounted(() => {
       <span class="offline-banner-text">Что-то не так с соединением</span>
     </div>
     <div v-else-if="showRestoredBanner" class="offline-banner online-restored-banner" role="status">
-      <span class="offline-banner-icon">
-        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="20 6 9 17 4 12"></polyline>
+      <span class="offline-banner-icon offline-banner-icon--restored">
+        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2.25" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline class="offline-banner-check-mark" points="4 12 9 17 20 6" />
         </svg>
       </span>
       <span class="offline-banner-text">Соединение восстановлено</span>
@@ -6895,6 +6895,63 @@ body {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  transform-origin: center;
+}
+
+.offline-banner-icon--pulse {
+  animation: offline-wifi-blink 1.75s ease-in-out infinite;
+}
+
+.offline-banner-icon--restored {
+  animation: restored-icon-pop 0.85s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.offline-banner-check-mark {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  animation: checkmark-draw 0.75s cubic-bezier(0.65, 0, 0.35, 1) 0.25s forwards;
+}
+
+@keyframes offline-wifi-blink {
+  0%, 100% {
+    opacity: 0.4;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+}
+
+@keyframes restored-icon-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.45) rotate(-14deg);
+  }
+  70% {
+    transform: scale(1.12) rotate(0deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+@keyframes checkmark-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .offline-banner-icon--pulse,
+  .offline-banner-icon--restored,
+  .offline-banner-check-mark {
+    animation: none;
+    opacity: 1;
+    transform: none;
+    stroke-dashoffset: 0;
+  }
 }
 
 .online-restored-banner {
