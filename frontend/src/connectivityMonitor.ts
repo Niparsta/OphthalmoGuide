@@ -1,17 +1,18 @@
 import { apiUrl } from './services/api'
 
-const LIGHT_PROBE_URL = `${window.location.origin}/favicon.svg`
-const DEEP_PROBE_URL = apiUrl('/health/')
+const LIGHT_URL = `${window.location.origin}/favicon.svg`
+const DEEP_URL = apiUrl('/health/')
 const PROBE_TIMEOUT_MS = 5000
-const RETRY_DELAY_MS = 2_000
-const FAILURE_THRESHOLD = 2
 
-const POLL_HEALTHY_MS = 30_000
-const DEEP_PROBE_HEALTHY_MS = 90_000
-const POLL_NETWORK_ISSUE_MS = 8_000
-const POLL_BACKEND_ISSUE_MS = 30_000
+const LIGHT_NORMAL_MS = 30_000
+const LIGHT_RECOVERY_MS = 8_000
+const LIGHT_LOAD_RETRY_MS = 5_000
 
-type Issue = 'network' | 'backend' | null
+const DEEP_NORMAL_MS = 90_000
+const DEEP_RECOVERY_MS = 30_000
+const DEEP_LOAD_RETRY_MS = 10_000
+
+type LayerMode = 'normal' | 'recovering'
 
 export interface ConnectivityMonitor {
   stop: () => void
@@ -21,20 +22,40 @@ export function createConnectivityMonitor(
   onStatusChange: (online: boolean) => void,
 ): ConnectivityMonitor {
   let healthy = navigator.onLine
-  let issue: Issue = null
+  let lightMode: LayerMode = 'normal'
+  let deepMode: LayerMode = 'normal'
+  let lastLightAt = 0
   let lastDeepAt = 0
-  let consecutiveFailures = 0
-  let pollTimer: ReturnType<typeof setInterval> | null = null
-  let retryTimer: ReturnType<typeof setTimeout> | null = null
-  let probing = false
+  let pollTimer: ReturnType<typeof setTimeout> | null = null
+  let lightLoadRetryTimer: ReturnType<typeof setTimeout> | null = null
+  let deepLoadRetryTimer: ReturnType<typeof setTimeout> | null = null
+  let running = false
 
-  function setHealthy(next: boolean) {
+  function lightInterval() {
+    return lightMode === 'normal' ? LIGHT_NORMAL_MS : LIGHT_RECOVERY_MS
+  }
+
+  function deepInterval() {
+    return deepMode === 'normal' ? DEEP_NORMAL_MS : DEEP_RECOVERY_MS
+  }
+
+  function syncHealthy() {
+    const next = lightMode === 'normal' && deepMode === 'normal'
     if (healthy === next) return
     healthy = next
-    consecutiveFailures = 0
-    if (next) issue = null
     onStatusChange(next)
-    schedulePolling()
+  }
+
+  function enterRecovery(layer: 'light' | 'deep') {
+    if (layer === 'light') lightMode = 'recovering'
+    else deepMode = 'recovering'
+    syncHealthy()
+  }
+
+  function enterNormal(layer: 'light' | 'deep') {
+    if (layer === 'light') lightMode = 'normal'
+    else deepMode = 'normal'
+    syncHealthy()
   }
 
   async function request(url: string, method: 'GET' | 'HEAD'): Promise<boolean> {
@@ -55,118 +76,159 @@ export function createConnectivityMonitor(
     }
   }
 
-  function scheduleRetry() {
-    if (retryTimer) clearTimeout(retryTimer)
-    retryTimer = setTimeout(() => void evaluateConnectivity(), RETRY_DELAY_MS)
+  async function probeLight(): Promise<boolean> {
+    lastLightAt = Date.now()
+    return request(LIGHT_URL, 'HEAD')
   }
 
-  function markUnhealthy(nextIssue: Issue) {
-    issue = nextIssue
-    setHealthy(false)
+  async function probeDeep(): Promise<boolean> {
+    lastDeepAt = Date.now()
+    return request(DEEP_URL, 'GET')
   }
 
-  async function evaluateConnectivity(forceDeep = false) {
-    if (document.hidden || probing) return
-    probing = true
+  function isLightDue(): boolean {
+    return Date.now() - lastLightAt >= lightInterval()
+  }
+
+  function isDeepDue(): boolean {
+    return Date.now() - lastDeepAt >= deepInterval()
+  }
+
+  function clearLoadRetries() {
+    if (lightLoadRetryTimer) clearTimeout(lightLoadRetryTimer)
+    if (deepLoadRetryTimer) clearTimeout(deepLoadRetryTimer)
+    lightLoadRetryTimer = null
+    deepLoadRetryTimer = null
+  }
+
+  function schedulePoll() {
+    if (document.hidden) return
+    if (pollTimer) clearTimeout(pollTimer)
+
+    const now = Date.now()
+    const lightWait = Math.max(0, lightInterval() - (now - lastLightAt))
+    const deepWait = Math.max(0, deepInterval() - (now - lastDeepAt))
+    const delay = Math.min(lightWait, deepWait)
+
+    pollTimer = setTimeout(() => void tick(), delay <= 0 ? 0 : delay)
+  }
+
+  function stopPoll() {
+    if (pollTimer) clearTimeout(pollTimer)
+    pollTimer = null
+  }
+
+  async function runLightStartup() {
+    const lightOk = await probeLight()
+    if (lightOk) {
+      enterNormal('light')
+      return
+    }
+
+    lightLoadRetryTimer = setTimeout(async () => {
+      lightLoadRetryTimer = null
+      const retryOk = await probeLight()
+      if (retryOk) enterNormal('light')
+      else enterRecovery('light')
+      schedulePoll()
+    }, LIGHT_LOAD_RETRY_MS)
+  }
+
+  async function runDeepStartup() {
+    const deepOk = await probeDeep()
+    if (deepOk) {
+      enterNormal('deep')
+      return
+    }
+
+    deepLoadRetryTimer = setTimeout(async () => {
+      deepLoadRetryTimer = null
+      const retryOk = await probeDeep()
+      if (retryOk) enterNormal('deep')
+      else enterRecovery('deep')
+      schedulePoll()
+    }, DEEP_LOAD_RETRY_MS)
+  }
+
+  async function runStartup() {
+    if (document.hidden) return
+
+    if (!navigator.onLine) {
+      enterRecovery('light')
+      enterRecovery('deep')
+      schedulePoll()
+      return
+    }
+
+    await Promise.all([runLightStartup(), runDeepStartup()])
+    schedulePoll()
+  }
+
+  async function checkLight() {
+    const lightOk = await probeLight()
+    if (lightOk) enterNormal('light')
+    else enterRecovery('light')
+  }
+
+  async function checkDeep() {
+    const deepOk = await probeDeep()
+    if (deepOk) enterNormal('deep')
+    else enterRecovery('deep')
+  }
+
+  async function tick() {
+    if (document.hidden || running) return
+    running = true
 
     try {
       if (!navigator.onLine) {
-        consecutiveFailures = 0
-        markUnhealthy('network')
+        enterRecovery('light')
+        enterRecovery('deep')
         return
       }
 
-      const now = Date.now()
-
-      if (issue !== 'backend') {
-        const lightOk = await request(LIGHT_PROBE_URL, 'HEAD')
-        if (!lightOk) {
-          if (healthy && ++consecutiveFailures < FAILURE_THRESHOLD) {
-            issue = 'network'
-            scheduleRetry()
-            return
-          }
-          consecutiveFailures = 0
-          markUnhealthy('network')
-          return
-        }
-      }
-
-      consecutiveFailures = 0
-
-      const deepInterval = healthy ? DEEP_PROBE_HEALTHY_MS : POLL_BACKEND_ISSUE_MS
-      const deepDue = forceDeep || now - lastDeepAt >= deepInterval
-      if (!deepDue) return
-
-      const deepOk = await request(DEEP_PROBE_URL, 'GET')
-      lastDeepAt = now
-
-      if (deepOk) {
-        issue = null
-        setHealthy(true)
-        return
-      }
-
-      if (healthy && ++consecutiveFailures < FAILURE_THRESHOLD) {
-        issue = 'backend'
-        scheduleRetry()
-        return
-      }
-
-      consecutiveFailures = 0
-      markUnhealthy('backend')
+      const checks: Promise<void>[] = []
+      if (isLightDue()) checks.push(checkLight())
+      if (isDeepDue()) checks.push(checkDeep())
+      await Promise.all(checks)
     } finally {
-      probing = false
+      running = false
+      schedulePoll()
     }
   }
 
-  function schedulePolling() {
-    if (document.hidden) return
-    if (pollTimer) clearInterval(pollTimer)
-
-    const interval = healthy
-      ? POLL_HEALTHY_MS
-      : issue === 'backend'
-        ? POLL_BACKEND_ISSUE_MS
-        : POLL_NETWORK_ISSUE_MS
-
-    pollTimer = setInterval(() => void evaluateConnectivity(), interval)
-  }
-
   function onBrowserOffline() {
-    if (retryTimer) clearTimeout(retryTimer)
-    consecutiveFailures = 0
-    markUnhealthy('network')
+    clearLoadRetries()
+    enterRecovery('light')
+    enterRecovery('deep')
+    schedulePoll()
   }
 
   function onBrowserOnline() {
-    consecutiveFailures = 0
-    void evaluateConnectivity(true)
+    clearLoadRetries()
+    void runStartup()
   }
 
   function onVisibilityChange() {
     if (document.hidden) {
-      if (pollTimer) clearInterval(pollTimer)
-      pollTimer = null
+      stopPoll()
       return
     }
 
-    const deepStale = Date.now() - lastDeepAt >= DEEP_PROBE_HEALTHY_MS
-    void evaluateConnectivity(deepStale)
-    schedulePolling()
+    void tick()
+    schedulePoll()
   }
 
   window.addEventListener('offline', onBrowserOffline)
   window.addEventListener('online', onBrowserOnline)
   document.addEventListener('visibilitychange', onVisibilityChange)
 
-  void evaluateConnectivity(true)
-  schedulePolling()
+  void runStartup()
 
   return {
     stop() {
-      if (pollTimer) clearInterval(pollTimer)
-      if (retryTimer) clearTimeout(retryTimer)
+      stopPoll()
+      clearLoadRetries()
       window.removeEventListener('offline', onBrowserOffline)
       window.removeEventListener('online', onBrowserOnline)
       document.removeEventListener('visibilitychange', onVisibilityChange)
