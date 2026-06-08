@@ -4,9 +4,30 @@ import { Notivue, Notifications, push, darkTheme, lightTheme } from 'notivue'
 import AppBrand from './components/AppBrand.vue'
 import ConfirmModal from './components/ConfirmModal.vue'
 import { API_BASE, apiUrl } from './services/api'
+import forbiddenHtml from '../public/403.html?raw' // HMR touch
+import unauthorizedHtml from '../public/401.html?raw'
+import { createConnectivityMonitor, type ConnectivityMonitor } from './connectivityMonitor'
 
 const isDark = ref(false)
 let mediaQuery: MediaQueryList | null = null
+
+const isOnline = ref(navigator.onLine)
+const showRestoredBanner = ref(false)
+let restoredTimeout: ReturnType<typeof setTimeout> | null = null
+let connectivityMonitor: ConnectivityMonitor | null = null
+
+function handleConnectivityChange(online: boolean) {
+  if (online && !isOnline.value) {
+    showRestoredBanner.value = true
+    if (restoredTimeout) clearTimeout(restoredTimeout)
+    restoredTimeout = setTimeout(() => {
+      showRestoredBanner.value = false
+    }, 3000)
+  } else if (!online) {
+    showRestoredBanner.value = false
+  }
+  isOnline.value = online
+}
 
 const updateTheme = (e: MediaQueryListEvent | MediaQueryList) => {
   isDark.value = e.matches
@@ -112,6 +133,20 @@ function exitAdminAfterSessionLoss(message: string) {
   }
   activeTab.value = 'diagnostics'
   showNotification(message, 'warning')
+}
+
+function showForbiddenPage() {
+  isAdmin.value = false
+  document.open()
+  document.write(forbiddenHtml)
+  document.close()
+}
+
+function showUnauthorizedPage() {
+  isAdmin.value = false
+  document.open()
+  document.write(unauthorizedHtml)
+  document.close()
 }
 
 const authentikUserPortalUrl = computed(() => {
@@ -574,8 +609,12 @@ async function logoutAdmin() {
   clearAdminSession()
   sessionStorage.removeItem(OAUTH_REDIRECT_URI_KEY)
 
-  // Redirect to home page without destroying the SSO session in Authentik
-  window.location.href = '/'
+  const logoutUrl = buildAuthentikLogoutUrl()
+  if (logoutUrl) {
+    window.location.href = logoutUrl
+  } else {
+    window.location.href = '/'
+  }
 }
 
 /** Лёгкая проверка сессии без перезагрузки базы знаний и без сброса UI. */
@@ -594,12 +633,9 @@ async function validateAdminSessionOnly() {
     })
     if (!res.ok) {
       if (res.status === 403) {
-        const wasAlreadyUnauthorized = isAdminUnauthorized.value
-        isAdmin.value = false
-        isAdminUnauthorized.value = true
-        if (!wasAlreadyUnauthorized) {
-          showNotification('Недостаточно прав для доступа к панели управления', 'error')
-        }
+        showForbiddenPage()
+      } else if (res.status === 401) {
+        showUnauthorizedPage()
       } else {
         exitAdminAfterSessionLoss('Сессия истекла – авторизуйтесь повторно')
       }
@@ -616,7 +652,7 @@ function navigateToAdmin(e: Event) {
     return
   }
   e.preventDefault()
-  window.history.pushState({}, '', '/admin')
+  window.history.pushState({}, '', '/admin/')
   void checkAdminRoute({ userInitiated: true })
 }
 
@@ -680,10 +716,16 @@ async function checkAdminRoute(options: { userInitiated?: boolean } = {}) {
         if (!res.ok) {
           onAdminRoute.value = true
           if (res.status === 403) {
-            const wasAlreadyUnauthorized = isAdminUnauthorized.value
-            isAdminUnauthorized.value = true
-            if (!wasAlreadyUnauthorized) {
-              showNotification('Недостаточно прав для доступа к панели управления', 'error')
+            showForbiddenPage()
+          } else if (res.status === 401) {
+            clearAdminSession()
+            if (!authConfig.value) {
+              await fetchConfig()
+            }
+            if (authConfig.value?.enabled) {
+              redirectToAuthentik()
+            } else {
+              await enterDemoAdminMode()
             }
           } else {
             exitAdminAfterSessionLoss('Сессия истекла – авторизуйтесь повторно')
@@ -758,14 +800,9 @@ async function apiFetch(endpoint: string, options: Omit<RequestInit, 'body'> & {
   
   if (!response.ok) {
     if (response.status === 401 && (isAdmin.value || isAdminUnauthorized.value)) {
-      exitAdminAfterSessionLoss('Сессия администратора истекла – авторизуйтесь повторно')
+      showUnauthorizedPage()
     } else if (response.status === 403 && (isAdmin.value || isAdminUnauthorized.value)) {
-      const wasAlreadyUnauthorized = isAdminUnauthorized.value
-      isAdmin.value = false
-      isAdminUnauthorized.value = true
-      if (!wasAlreadyUnauthorized) {
-        showNotification('Недостаточно прав для доступа к панели управления', 'error')
-      }
+      showForbiddenPage()
     }
     await response.text()
     throw new Error('request_failed')
@@ -1827,6 +1864,7 @@ onMounted(async () => {
   loadHistory()
   await checkAdminRoute()
   window.addEventListener('popstate', onPopState)
+  connectivityMonitor = createConnectivityMonitor(handleConnectivityChange)
 
   adminSessionCheckInterval = setInterval(() => {
     void validateAdminSessionOnly()
@@ -1836,6 +1874,9 @@ onMounted(async () => {
 onUnmounted(() => {
   mediaQuery?.removeEventListener('change', updateTheme)
   window.removeEventListener('popstate', onPopState)
+  connectivityMonitor?.stop()
+  connectivityMonitor = null
+  if (restoredTimeout) clearTimeout(restoredTimeout)
   if (adminSessionCheckInterval) clearInterval(adminSessionCheckInterval)
   if (recordingTimer) clearInterval(recordingTimer)
   stopSynthesizing()
@@ -1843,6 +1884,32 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <!-- Connection Status Banner -->
+  <Transition name="slide-down">
+    <div v-if="!isOnline" class="offline-banner" role="alert">
+      <span class="offline-banner-icon">
+        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 20h.01" />
+          <path d="M8.5 16.429a5 5 0 0 1 7 0" />
+          <path d="M5 12.859a10 10 0 0 1 5.17-2.69" />
+          <path d="M19 12.859a10 10 0 0 0-2.007-1.523" />
+          <path d="M2 8.82a15 15 0 0 1 4.177-2.643" />
+          <path d="M22 8.82a15 15 0 0 0-11.288-3.764" />
+          <path d="m2 2 20 20" />
+        </svg>
+      </span>
+      <span class="offline-banner-text">Что-то не так с соединением</span>
+    </div>
+    <div v-else-if="showRestoredBanner" class="offline-banner online-restored-banner" role="status">
+      <span class="offline-banner-icon">
+        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="20 6 9 17 4 12"></polyline>
+        </svg>
+      </span>
+      <span class="offline-banner-text">Соединение восстановлено</span>
+    </div>
+  </Transition>
+
   <div 
     class="ophthalmo-app" 
     :class="{ 
@@ -1854,7 +1921,7 @@ onUnmounted(() => {
     <!-- Floating Admin entry corner -->
     <div v-if="!isAdmin && !isAdminUnauthorized" class="admin-entry-corner">
       <a 
-        href="/admin" 
+        href="/admin/" 
         class="btn-admin-login" 
         aria-label="Открыть панель управления"
         @click="navigateToAdmin"
@@ -2046,7 +2113,7 @@ onUnmounted(() => {
                 Доступ ограничен
               </h2>
               <p class="admin-access-denied-text">
-                У вашей учётной записи нет прав администратора для работы с панелью управления
+                Вам не выписали рецепт для просмотра этого раздела.
               </p>
             </div>
 
@@ -6799,6 +6866,58 @@ body {
 
 .history-table-row-premium.row-selected td {
   background-color: var(--bg-hover) !important;
+}
+
+/* Offline Banner styling */
+.offline-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: rgba(239, 68, 68, 0.95);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #ffffff;
+  padding: 0.65rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  z-index: 10000;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.15);
+  text-align: center;
+}
+
+.offline-banner-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.online-restored-banner {
+  background: rgba(16, 185, 129, 0.95);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.15);
+}
+
+/* Slide down transition */
+.slide-down-enter-active,
+.slide-down-leave-active {
+  transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.slide-down-enter-from,
+.slide-down-leave-to {
+  transform: translateY(-100%);
+  opacity: 0;
+}
+
+.slide-down-enter-to,
+.slide-down-leave-from {
+  transform: translateY(0);
+  opacity: 1;
 }
 
 </style>

@@ -21,6 +21,7 @@ services:
     depends_on:
       - backend
       - dbx
+      - grafana
     restart: unless-stopped
 
   backend:

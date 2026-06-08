@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Страница не найдена (404) | OphthalmoGuide</title>
+    <style>
+        :root {
+            --bg-app: #f6f8fa;
+            --bg-card: #ffffff;
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --border-color: rgba(15, 23, 42, 0.08);
+            --shadow-md: 0 10px 25px -5px rgba(15, 23, 42, 0.04);
+            
+            --error-accent: #3b82f6;
+            --error-border: rgba(59, 130, 246, 0.25);
+            --error-bg: rgba(59, 130, 246, 0.04);
+            --error-icon-bg: rgba(59, 130, 246, 0.1);
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-app: #0c0c0c;
+                --bg-card: #141414;
+                --text-main: #f5f5f5;
+                --text-muted: #a3a3a3;
+                --border-color: rgba(255, 255, 255, 0.09);
+                --shadow-md: 0 12px 28px rgba(0, 0, 0, 0.45);
+                
+                --error-accent: #60a5fa;
+                --error-border: rgba(96, 165, 250, 0.25);
+                --error-bg: rgba(96, 165, 250, 0.04);
+                --error-icon-bg: rgba(96, 165, 250, 0.1);
+            }
+        }
+        
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg-app);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+            transition: background-color 0.3s, color 0.3s;
+        }
+        .diagnostics-panel-centered {
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            justify-content: center;
+            width: 100%;
+            flex: 1;
+            min-height: 0;
+        }
+        .centered-workspace-card {
+            width: 100%;
+            max-width: 580px;
+            margin-inline: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+        }
+        
+        /* AppBrand styles */
+        .brand-group-centered {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            gap: 0.4rem;
+            width: 100%;
+            margin-bottom: 0.75rem;
+        }
+        .logo-wrapper-row {
+            display: flex;
+            align-items: center;
+            gap: 0.65rem;
+            user-select: none;
+            text-decoration: none;
+            color: inherit;
+        }
+        .blinking-eye-logo {
+            width: 28px;
+            height: 28px;
+            color: var(--error-accent);
+            transform-origin: 12px 12px;
+            animation: blink-eye-anim 7s infinite ease-in-out;
+            flex-shrink: 0;
+        }
+        @keyframes blink-eye-anim {
+            0%, 82%, 88%, 94%, 100% {
+                transform: scaleY(1);
+            }
+            85%, 91% {
+                transform: scaleY(0.08);
+            }
+        }
+        .brand-group-centered .logo-text {
+            font-size: 1.8rem;
+            font-weight: 800;
+            margin: 0;
+            letter-spacing: -0.03em;
+            color: var(--text-main);
+        }
+        
+        /* Workspace Card and custom styles */
+        .workspace-card-wrapper {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            padding: clamp(1.25rem, 2.5vw, 1.75rem);
+            box-shadow: var(--shadow-md);
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+        }
+        .admin-access-denied-card {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1.25rem;
+            padding: 2.5rem;
+            text-align: center;
+            border: 1px solid var(--error-border);
+            background: var(--error-bg);
+            border-radius: 12px;
+            transition: border-color 0.35s cubic-bezier(0.16, 1, 0.3, 1), 
+                        box-shadow 0.35s cubic-bezier(0.16, 1, 0.3, 1), 
+                        transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .admin-access-denied-card:hover {
+            border-color: var(--error-accent);
+            box-shadow: 0 8px 20px -6px rgba(15, 23, 42, 0.06), 0 0 0 4px var(--error-icon-bg);
+            transform: translateY(-2px);
+        }
+        @media (prefers-color-scheme: dark) {
+            .admin-access-denied-card:hover {
+                box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35), 0 0 0 4px var(--error-icon-bg);
+            }
+        }
+        .admin-access-denied-icon {
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            background: var(--error-icon-bg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--error-accent);
+        }
+        .admin-access-denied-title {
+            color: var(--error-accent);
+            font-weight: 700;
+            margin: 0;
+            font-size: 1.5rem;
+        }
+        .admin-access-denied-text {
+            color: var(--text-muted);
+            max-width: 480px;
+            line-height: 1.6;
+            margin: 0;
+            font-size: 0.95rem;
+        }
+        
+        /* Pupil search motion animation */
+        .pupil-search {
+            animation: search-move 4s infinite ease-in-out;
+            transform-origin: 12px 12px;
+        }
+        @keyframes search-move {
+            0%, 100% { transform: translate(0, 0); }
+            25% { transform: translate(-3px, -1.5px); }
+            50% { transform: translate(3px, 1.5px); }
+            75% { transform: translate(-1.5px, 3px); }
+        }
+        
+        /* Unified Button Styles */
+        .btn-primary {
+            width: 100%;
+            background: #0f172a;
+            border: none;
+            color: #ffffff;
+            font-size: 0.95rem;
+            font-weight: 600;
+            min-height: 52px;
+            padding: 0.95rem 2rem;
+            border-radius: 12px;
+            cursor: pointer;
+            box-shadow: 0 10px 20px -10px rgba(15, 23, 42, 0.3);
+            transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-decoration: none;
+        }
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 12px 24px -10px rgba(15, 23, 42, 0.4);
+        }
+        @media (prefers-color-scheme: dark) {
+            .btn-primary {
+                background: #e5e5e5;
+                color: #111111;
+                box-shadow: 0 4px 12px rgba(255, 255, 255, 0.1);
+            }
+            .btn-primary:hover {
+                box-shadow: 0 6px 16px rgba(255, 255, 255, 0.15);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="diagnostics-panel-centered">
+        <div class="centered-workspace-card">
+            <!-- AppBrand header matching App.vue exactly -->
+            <div class="brand-group-centered">
+                <a href="/" class="logo-wrapper-row" title="На главную">
+                    <svg class="blinking-eye-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                        <circle cx="12" cy="12" r="3.5"></circle>
+                    </svg>
+                    <h1 class="logo-text">OphthalmoGuide</h1>
+                </a>
+            </div>
+
+            <!-- Workspace Card wrapper -->
+            <div class="workspace-card-wrapper">
+                <div class="admin-access-denied-card">
+                    <div class="admin-access-denied-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" width="36" height="36" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                            <circle class="pupil-search" cx="12" cy="12" r="3.5"></circle>
+                        </svg>
+                    </div>
+                    <h2 class="admin-access-denied-title">Страница вне зоны видимости</h2>
+                    <p class="admin-access-denied-text">Нам не удалось обнаружить эту страницу.<br>Возможно, ссылка устарела или содержит ошибку.</p>
+                </div>
+                
+                <a href="/" class="btn-primary">Вернуться на главную</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
