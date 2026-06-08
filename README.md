@@ -25,7 +25,8 @@
   * **OllamaQueueBroker** – брокер очереди запросов к LLM для обработки вопросов пользователей без перегрузки системы;
   * **SaluteSpeechService** – интеграция с API SaluteSpeech для распознавания голоса и синтеза речи;
   * **PdfExportService** – генерация PDF-отчётов по результатам диагностики;
-  * **ValkeySeeder** – утилита начальной загрузки данных в кэш Valkey.
+  * **KnowledgeJsonValidator** – статический валидатор для проверки корректности структуры и целостности данных в JSON-файле базы знаний (`ophthalmology_knowledge.json`);
+  * **ValkeySeeder** – утилита начальной загрузки данных в кэш Valkey (выполняет предварительную проверку структуры через `KnowledgeJsonValidator`).
 
 ### 3. Bot-WorkerService (интеграция с платформами чат-ботов ВКонтакте и Telegram)
 * **Стек:** .NET Worker Service (.NET 10, C#), Telegram.Bot, VkNet
