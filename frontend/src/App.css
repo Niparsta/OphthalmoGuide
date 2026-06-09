@@ -93,6 +93,11 @@
   --app-bottom-nav-height: 3.5rem;
   --app-bottom-nav-offset: calc(var(--app-bottom-nav-height) + env(safe-area-inset-bottom, 0px));
 
+  --scrollbar-size: 8px;
+  --scrollbar-track: rgba(15, 23, 42, 0.04);
+  --scrollbar-thumb: rgba(15, 23, 42, 0.16);
+  --scrollbar-thumb-hover: rgba(15, 23, 42, 0.28);
+
   color-scheme: light;
 }
 
@@ -120,6 +125,11 @@
     --shadow-md: 0 12px 28px rgba(0, 0, 0, 0.45);
     --shadow-lg: 0 28px 56px rgba(0, 0, 0, 0.55);
     --shadow-focus: 0 0 0 4px rgba(255, 255, 255, 0.1);
+
+    --scrollbar-size: 8px;
+    --scrollbar-track: rgba(255, 255, 255, 0.04);
+    --scrollbar-thumb: rgba(255, 255, 255, 0.14);
+    --scrollbar-thumb-hover: rgba(255, 255, 255, 0.24);
 
     color-scheme: dark;
   }
@@ -159,6 +169,57 @@
   .symptom-count-badge {
     background-color: var(--bg-hover);
   }
+}
+
+html,
+.diagnostics-panel-centered.diagnostics-has-results,
+.textarea-container-premium textarea,
+.diseases-scroller-premium,
+.checklist-grid,
+.audit-log-scroller-premium {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+html::-webkit-scrollbar,
+.diagnostics-panel-centered.diagnostics-has-results::-webkit-scrollbar,
+.textarea-container-premium textarea::-webkit-scrollbar,
+.diseases-scroller-premium::-webkit-scrollbar,
+.checklist-grid::-webkit-scrollbar,
+.audit-log-scroller-premium::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+}
+
+html::-webkit-scrollbar-track,
+.diagnostics-panel-centered.diagnostics-has-results::-webkit-scrollbar-track,
+.textarea-container-premium textarea::-webkit-scrollbar-track,
+.diseases-scroller-premium::-webkit-scrollbar-track,
+.checklist-grid::-webkit-scrollbar-track,
+.audit-log-scroller-premium::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: 999px;
+}
+
+html::-webkit-scrollbar-thumb,
+.diagnostics-panel-centered.diagnostics-has-results::-webkit-scrollbar-thumb,
+.textarea-container-premium textarea::-webkit-scrollbar-thumb,
+.diseases-scroller-premium::-webkit-scrollbar-thumb,
+.checklist-grid::-webkit-scrollbar-thumb,
+.audit-log-scroller-premium::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  min-height: 2.5rem;
+}
+
+html::-webkit-scrollbar-thumb:hover,
+.diagnostics-panel-centered.diagnostics-has-results::-webkit-scrollbar-thumb:hover,
+.textarea-container-premium textarea::-webkit-scrollbar-thumb:hover,
+.diseases-scroller-premium::-webkit-scrollbar-thumb:hover,
+.checklist-grid::-webkit-scrollbar-thumb:hover,
+.audit-log-scroller-premium::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
 }
 
 *, *::before, *::after {
