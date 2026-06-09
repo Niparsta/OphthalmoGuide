@@ -1,6 +1,10 @@
 ﻿<script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { Notivue, Notifications, push, darkTheme, lightTheme } from 'notivue'
+import { FilterMatchMode, FilterService } from '@primevue/core/api'
+import DataTable, { type DataTableFilterEvent } from 'primevue/datatable'
+import Column from 'primevue/column'
+import Select from 'primevue/select'
 import AppBrand from './components/AppBrand.vue'
 import ConfirmModal from './components/ConfirmModal.vue'
 import { API_BASE, apiUrl } from './services/api'
@@ -315,6 +319,16 @@ async function copySessionId(id: string) {
   }
 }
 
+async function copyDiagnosticId(id: string) {
+  if (!id) return
+  try {
+    await navigator.clipboard.writeText(id)
+    showNotification('ID диагностики скопирован', 'success')
+  } catch {
+    showNotification('Не удалось скопировать ID диагностики', 'error')
+  }
+}
+
 function showNotification(message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info') {
   if (type === 'success') {
     push.success(message)
@@ -383,28 +397,62 @@ const ttsCache = new Map<string, string>() // Cache: speechText -> objectUrl
 const history = ref<SessionHistoryRecord[]>([])
 const adminHistory = ref<SessionHistoryRecord[]>([])
 const loadingHistory = ref(false)
-const adminHistorySearch = ref('')
-const historyViewMode = ref<'tiles' | 'table'>('table')
-const tableFilterDate = ref('')
-const tableFilterSessionId = ref('')
-const tableFilterComplaint = ref('')
-const tableFilterSymptom = ref('')
-const tableFilterDisease = ref('')
+const tableFilterOptions = ref({
+  dates: [] as string[],
+  diagnosticIds: [] as string[],
+  sessionIds: [] as string[],
+  complaints: [] as string[],
+  symptoms: [] as string[],
+  diseases: [] as string[],
+})
+
+function createDefaultHistoryTableFilters() {
+  return {
+    timestamp: { value: null as string | null, matchMode: 'historyTimestampContains' },
+    id: { value: null as string | null, matchMode: FilterMatchMode.CONTAINS },
+    sessionId: { value: null as string | null, matchMode: FilterMatchMode.CONTAINS },
+    complaintText: { value: null as string | null, matchMode: FilterMatchMode.CONTAINS },
+    detectedSymptoms: { value: null as string | null, matchMode: 'historySymptomContains' },
+    results: { value: null as string | null, matchMode: 'historyDiseaseContains' },
+  }
+}
+
+const historyTableFilters = ref(createDefaultHistoryTableFilters())
+const filteredAdminHistoryCount = ref(0)
+const selectedHistoryRecords = ref<SessionHistoryRecord[]>([])
 
 const expandedHistoryDiseases = ref<Record<string, boolean>>({})
 const loadedRecordId = ref<string | null>(null)
-const selectedHistoryIds = ref<string[]>([])
 function toggleHistoryDiseaseExpand(recordId: string, diseaseName: string) {
   const key = `${recordId}_${diseaseName}`
   expandedHistoryDiseases.value[key] = !expandedHistoryDiseases.value[key]
 }
 
-function clearTableFilters() {
-  tableFilterDate.value = ''
-  tableFilterSessionId.value = ''
-  tableFilterComplaint.value = ''
-  tableFilterSymptom.value = ''
-  tableFilterDisease.value = ''
+function clearHistoryTableFilters() {
+  historyTableFilters.value = createDefaultHistoryTableFilters()
+}
+
+function rebuildTableFilterOptions(records: SessionHistoryRecord[]) {
+  tableFilterOptions.value = {
+    dates: [...new Set(records.map(record => record.timestamp).filter(Boolean))]
+      .sort((left, right) => new Date(right).getTime() - new Date(left).getTime()),
+    diagnosticIds: [...new Set(records.map(record => record.id).filter(Boolean))].sort(),
+    sessionIds: [...new Set(records.map(record => record.sessionId).filter((id): id is string => Boolean(id)))].sort(),
+    complaints: [...new Set(records.map(record => record.complaintText).filter(Boolean))].sort(),
+    symptoms: [...new Set(records.flatMap(record => record.detectedSymptoms || []))].sort(),
+    diseases: [...new Set(records.flatMap(record => record.results?.map(result => result.disease) || []))].sort(),
+  }
+}
+
+function truncateFilterLabel(text: string, maxLength = 72) {
+  if (text.length <= maxLength) return text
+  return `${text.slice(0, maxLength)}…`
+}
+
+function onHistoryTableFilter(event: DataTableFilterEvent) {
+  filteredAdminHistoryCount.value = Array.isArray(event.filteredValue)
+    ? event.filteredValue.length
+    : adminHistory.value.length
 }
 
 // Admin history period filter (datetime-local strings, local time, second precision)
@@ -884,7 +932,7 @@ async function loadHistory() {
 
 async function loadAdminHistory() {
   loadingHistory.value = true
-  selectedHistoryIds.value = []
+  selectedHistoryRecords.value = []
   try {
     const params = new URLSearchParams()
     // Convert local datetime-local strings to UTC ISO for the backend.
@@ -899,8 +947,16 @@ async function loadAdminHistory() {
     const query = params.toString()
     const res = await apiFetch(`/api/admin/history${query ? `?${query}` : ''}`)
     adminHistory.value = await res.json()
+    rebuildTableFilterOptions(adminHistory.value)
+    clearHistoryTableFilters()
+    filteredAdminHistoryCount.value = adminHistory.value.length
+    selectedHistoryRecords.value = []
   } catch {
-    // admin history panel stays empty on load failure
+    adminHistory.value = []
+    rebuildTableFilterOptions([])
+    clearHistoryTableFilters()
+    filteredAdminHistoryCount.value = 0
+    selectedHistoryRecords.value = []
   } finally {
     loadingHistory.value = false
   }
@@ -914,22 +970,25 @@ function setHistoryPeriodPreset(hours: number) {
 }
 
 function deleteSelectedHistory() {
-  if (selectedHistoryIds.value.length === 0) return
+  if (selectedHistoryRecords.value.length === 0) return
   showConfirm(
     'Удалить выбранные сессии',
-    `Вы уверены, что хотите безвозвратно удалить выбранные сессии (${selectedHistoryIds.value.length})? Действие нельзя отменить.`,
+    `Вы уверены, что хотите безвозвратно удалить выбранные сессии (${selectedHistoryRecords.value.length})? Действие нельзя отменить.`,
     async () => {
       confirmModal.value.open = false
       try {
+        const selectedIds = selectedHistoryRecords.value.map(record => record.id)
         await apiFetch('/api/admin/history/bulk', { 
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(selectedHistoryIds.value)
+          body: JSON.stringify(selectedIds)
         })
-        const deletedSet = new Set(selectedHistoryIds.value)
+        const deletedSet = new Set(selectedIds)
         adminHistory.value = adminHistory.value.filter(r => !deletedSet.has(r.id))
         history.value = history.value.filter(r => !deletedSet.has(r.id))
-        selectedHistoryIds.value = []
+        rebuildTableFilterOptions(adminHistory.value)
+        selectedHistoryRecords.value = []
+        filteredAdminHistoryCount.value = adminHistory.value.length
         showNotification('Выбранные записи удалены', 'success')
       } catch (err) {
         showSafeError('Не удалось удалить выбранные записи, попробуйте ещё раз')
@@ -937,31 +996,6 @@ function deleteSelectedHistory() {
     },
     'Удалить'
   )
-}
-
-const isAllSelected = computed(() => {
-  const filtered = finalFilteredAdminHistory.value
-  if (filtered.length === 0) return false
-  return filtered.every(r => selectedHistoryIds.value.includes(r.id))
-})
-
-function toggleSelectAll() {
-  const filtered = finalFilteredAdminHistory.value
-  if (isAllSelected.value) {
-    selectedHistoryIds.value = selectedHistoryIds.value.filter(id => !filtered.some(r => r.id === id))
-  } else {
-    const newIds = new Set([...selectedHistoryIds.value, ...filtered.map(r => r.id)])
-    selectedHistoryIds.value = Array.from(newIds)
-  }
-}
-
-function toggleSelectRecord(id: string) {
-  const index = selectedHistoryIds.value.indexOf(id)
-  if (index > -1) {
-    selectedHistoryIds.value.splice(index, 1)
-  } else {
-    selectedHistoryIds.value.push(id)
-  }
 }
 
 // Load clicked history item
@@ -1694,73 +1728,30 @@ const filteredSymptoms = computed(() => {
   return symptoms.value.filter(s => s.toLowerCase().includes(query))
 })
 
-const filteredAdminHistory = computed(() => {
-  const query = adminHistorySearch.value.trim().toLowerCase()
-  if (!query) return adminHistory.value
+const historyDateFilterOptions = computed(() =>
+  tableFilterOptions.value.dates.map(timestamp => ({
+    label: formatDate(timestamp),
+    value: timestamp,
+  }))
+)
 
-  return adminHistory.value.filter(record => {
-    const diseaseNames = record.results?.map(result => result.disease).join(' ') || ''
-    const symptoms = record.detectedSymptoms?.join(' ') || ''
-    return [
-      record.sessionId || '',
-      record.complaintText,
-      symptoms,
-      diseaseNames
-    ].some(value => value.toLowerCase().includes(query))
-  })
-})
+const historyComplaintFilterOptions = computed(() =>
+  tableFilterOptions.value.complaints.map(complaint => ({
+    label: truncateFilterLabel(complaint),
+    value: complaint,
+  }))
+)
 
-const finalFilteredAdminHistory = computed(() => {
-  let list = filteredAdminHistory.value
-  if (historyViewMode.value === 'table') {
-    if (tableFilterDate.value) {
-      const hasTime = tableFilterDate.value.includes('T')
-      const filterDate = new Date(tableFilterDate.value)
-      if (!isNaN(filterDate.getTime())) {
-        list = list.filter(r => {
-          const rDate = new Date(r.timestamp)
-          const dateMatch = rDate.getFullYear() === filterDate.getFullYear() &&
-                            rDate.getMonth() === filterDate.getMonth() &&
-                            rDate.getDate() === filterDate.getDate()
-          if (!dateMatch) return false
-          if (hasTime) {
-            return rDate.getHours() === filterDate.getHours() &&
-                   rDate.getMinutes() === filterDate.getMinutes()
-          }
-          return true
-        })
-      }
-    }
-    if (tableFilterSessionId.value) {
-      const sidQuery = tableFilterSessionId.value.trim().toLowerCase()
-      list = list.filter(r => r.sessionId?.toLowerCase().includes(sidQuery))
-    }
-    if (tableFilterComplaint.value) {
-      const compQuery = tableFilterComplaint.value.trim().toLowerCase()
-      list = list.filter(r => r.complaintText.toLowerCase().includes(compQuery))
-    }
-    if (tableFilterSymptom.value) {
-      const symQuery = tableFilterSymptom.value.trim().toLowerCase()
-      list = list.filter(r => r.detectedSymptoms?.some(s => s.toLowerCase().includes(symQuery)))
-    }
-    if (tableFilterDisease.value) {
-      const disQuery = tableFilterDisease.value.trim().toLowerCase()
-      list = list.filter(r => r.results?.some(d => d.disease.toLowerCase().includes(disQuery)))
-    }
-  }
-  return list
-})
-
-const uniqueSessionIds = computed(() => {
-  return [...new Set(adminHistory.value.map(r => r.sessionId).filter(Boolean))].sort()
-})
-
-const uniqueHistorySymptoms = computed(() => {
-  return [...new Set(adminHistory.value.flatMap(r => r.detectedSymptoms || []))].sort()
-})
-
-const uniqueHistoryDiseases = computed(() => {
-  return [...new Set(adminHistory.value.flatMap(r => r.results?.map(d => d.disease) || []))].sort()
+const hasActiveHistoryTableFilters = computed(() => {
+  const filters = historyTableFilters.value
+  return Boolean(
+    filters.timestamp.value ||
+    filters.id.value ||
+    filters.sessionId.value ||
+    filters.complaintText.value ||
+    filters.detectedSymptoms.value ||
+    filters.results.value
+  )
 })
 
 const isKnowledgeDirty = computed(() => {
@@ -1931,6 +1922,23 @@ function ensureMicrophonePermissionsPolicy() {
 }
 
 onMounted(async () => {
+  FilterService.register('historyTimestampContains', (value: string | null | undefined, filter: string | null) => {
+    if (filter == null || filter === '') return true
+    if (!value) return false
+    const needle = filter.toLowerCase()
+    return formatDate(value).toLowerCase().includes(needle) || value.toLowerCase().includes(needle)
+  })
+  FilterService.register('historySymptomContains', (value: string[] | undefined, filter: string | null) => {
+    if (filter == null || filter === '') return true
+    const needle = filter.toLowerCase()
+    return Array.isArray(value) && value.some(symptom => symptom.toLowerCase().includes(needle))
+  })
+  FilterService.register('historyDiseaseContains', (value: DiseaseMatch[] | undefined, filter: string | null) => {
+    if (filter == null || filter === '') return true
+    const needle = filter.toLowerCase()
+    return Array.isArray(value) && value.some(result => result.disease.toLowerCase().includes(needle))
+  })
+
   ensureMicrophonePermissionsPolicy()
   const loggedOut = sessionStorage.getItem('logged_out_notification')
   if (loggedOut) {
@@ -2571,7 +2579,7 @@ onUnmounted(() => {
                       </button>
                     </div>
                     <div class="tile-info-line">
-                      <span class="threat-badge-mini" :class="getThreatColorClass(d.threatLevel)">
+                      <span class="threat-micro-badge" :class="getThreatColorClass(d.threatLevel)">
                         {{ getThreatLabel(d.threatLevel) }}
                       </span>
                       <span class="symptom-count-badge">
@@ -2860,11 +2868,11 @@ onUnmounted(() => {
           <div class="history-bottom-header">
             <h3>Все сессии диагностики</h3>
             <div class="history-header-actions">
-              <span class="history-stat-chip">{{ finalFilteredAdminHistory.length }} из {{ adminHistory.length }} записей</span>
+              <span class="history-stat-chip">{{ filteredAdminHistoryCount }} из {{ adminHistory.length }} записей</span>
               <button
                 class="btn-delete-history"
                 @click="deleteSelectedHistory"
-                :disabled="loadingHistory || selectedHistoryIds.length === 0"
+                :disabled="loadingHistory || selectedHistoryRecords.length === 0"
               >
                 <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
                   <polyline points="3 6 5 6 21 6"></polyline>
@@ -2872,217 +2880,287 @@ onUnmounted(() => {
                   <line x1="10" y1="11" x2="10" y2="17"></line>
                   <line x1="14" y1="11" x2="14" y2="17"></line>
                 </svg>
-                Удалить выбранные ({{ selectedHistoryIds.length }})
+                Удалить выбранные ({{ selectedHistoryRecords.length }})
               </button>
             </div>
           </div>
 
           <div class="history-table-wrapper-premium">
-            <table class="history-table-premium">
-              <thead>
-                <tr class="table-header-row">
-                  <th style="width: 44px; text-align: center;">
-                    <input 
-                      type="checkbox" 
-                      :checked="isAllSelected" 
-                      @change="toggleSelectAll"
-                      class="history-checkbox-all"
-                      aria-label="Выбрать все сессии"
-                    />
-                  </th>
-                  <th>Дата и время</th>
-                  <th>ID сессии</th>
-                  <th>Текст жалобы</th>
-                  <th>Симптомы</th>
-                  <th>Диагнозы</th>
-                  <th style="width: 44px; text-align: center;"></th>
-                </tr>
-                <tr class="table-filter-row">
-                  <td></td>
-                  <td>
-                    <input v-model="tableFilterDate" type="datetime-local" class="table-filter-input" />
-                  </td>
-                  <td>
-                    <input 
-                      v-model="tableFilterSessionId" 
-                      list="session-ids-list" 
-                      placeholder="Выбрать..." 
-                      class="table-filter-input" 
-                    />
-                    <datalist id="session-ids-list">
-                      <option v-for="id in uniqueSessionIds" :key="id" :value="id"></option>
-                    </datalist>
-                  </td>
-                  <td>
-                    <input v-model="tableFilterComplaint" type="text" placeholder="Фильтр..." class="table-filter-input" />
-                  </td>
-                  <td>
-                    <input 
-                      v-model="tableFilterSymptom" 
-                      list="history-symptoms-list" 
-                      placeholder="Выбрать..." 
-                      class="table-filter-input" 
-                    />
-                    <datalist id="history-symptoms-list">
-                      <option v-for="symptom in uniqueHistorySymptoms" :key="symptom" :value="symptom"></option>
-                    </datalist>
-                  </td>
-                  <td>
-                    <input 
-                      v-model="tableFilterDisease" 
-                      list="history-diseases-list" 
-                      placeholder="Выбрать..." 
-                      class="table-filter-input" 
-                    />
-                    <datalist id="history-diseases-list">
-                      <option v-for="disease in uniqueHistoryDiseases" :key="disease" :value="disease"></option>
-                    </datalist>
-                  </td>
-                  <td style="text-align: center;">
-                    <button 
-                      v-if="tableFilterDate || tableFilterSessionId || tableFilterComplaint || tableFilterSymptom || tableFilterDisease"
-                      @click="clearTableFilters" 
-                      class="btn-clear-table-filters" 
-                      title="Сбросить все фильтры"
+            <DataTable
+              v-model:filters="historyTableFilters"
+              v-model:selection="selectedHistoryRecords"
+              :value="adminHistory"
+              dataKey="id"
+              filterDisplay="row"
+              :loading="loadingHistory"
+              class="history-datatable"
+              rowHover
+              @filter="onHistoryTableFilter"
+            >
+              <template #empty>
+                <div class="history-datatable-empty">
+                  Записи, удовлетворяющие условиям фильтра, не найдены.
+                </div>
+              </template>
+
+              <Column selectionMode="multiple" headerStyle="width: 3rem" />
+
+              <Column field="timestamp" header="Дата и время" bodyClass="history-col-time" :showFilterMenu="false" style="min-width: 11rem">
+                <template #body="{ data }">
+                  <span class="td-time">{{ formatDate(data.timestamp) }}</span>
+                </template>
+                <template #filter="{ filterModel, filterCallback }">
+                  <Select
+                    v-model="filterModel.value"
+                    :options="historyDateFilterOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="Все"
+                    editable
+                    showClear
+                    overlay-class="history-filter-select-panel"
+                    class="history-filter-select"
+                    @update:modelValue="filterCallback()"
+                    @change="filterCallback()"
+                  />
+                </template>
+              </Column>
+
+              <Column field="id" header="ID диагностики" bodyClass="history-col-diagnostic-id td-diagnostic-id" :showFilterMenu="false" style="min-width: 12rem">
+                <template #body="{ data }">
+                  <div class="table-diagnostic-id-row">
+                    <span class="table-diagnostic-id-text">{{ data.id }}</span>
+                    <button
+                      type="button"
+                      class="btn-copy-table-diagnostic-id"
+                      title="Копировать ID диагностики"
+                      aria-label="Копировать ID диагностики"
+                      @click.stop="copyDiagnosticId(data.id)"
                     >
-                      ✕
+                      <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" aria-hidden="true">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                      </svg>
                     </button>
-                  </td>
-                </tr>
-              </thead>
-              <tbody>
-                <tr 
-                  v-for="record in finalFilteredAdminHistory" 
-                  :key="record.id"
-                  class="history-table-row-premium"
-                  :class="{ 'row-selected': selectedHistoryIds.includes(record.id) }"
-                >
-                  <td style="text-align: center;" data-label="Выбрать">
-                    <input 
-                      type="checkbox" 
-                      :checked="selectedHistoryIds.includes(record.id)" 
-                      @change="toggleSelectRecord(record.id)"
-                      class="history-checkbox-row"
-                    />
-                  </td>
-                  <td class="td-time" data-label="Дата и время">{{ formatDate(record.timestamp) }}</td>
-                  <td class="td-session" data-label="ID сессии">
-                    <span class="table-session-id-text" style="font-size: 0.75rem; word-break: break-all; white-space: normal;">
-                      {{ record.sessionId || '—' }}
+                  </div>
+                </template>
+                <template #filter="{ filterModel, filterCallback }">
+                  <Select
+                    v-model="filterModel.value"
+                    :options="tableFilterOptions.diagnosticIds"
+                    placeholder="Все"
+                    editable
+                    showClear
+                    overlay-class="history-filter-select-panel"
+                    class="history-filter-select"
+                    @update:modelValue="filterCallback()"
+                    @change="filterCallback()"
+                  />
+                </template>
+              </Column>
+
+              <Column field="sessionId" header="ID сессии" bodyClass="history-col-session td-session" :showFilterMenu="false" style="min-width: 12rem">
+                <template #body="{ data }">
+                  <div v-if="data.sessionId" class="table-diagnostic-id-row">
+                    <span class="table-session-id-text">{{ data.sessionId }}</span>
+                    <button
+                      type="button"
+                      class="btn-copy-table-session-id"
+                      title="Копировать ID сессии"
+                      aria-label="Копировать ID сессии"
+                      @click.stop="copySessionId(data.sessionId)"
+                    >
+                      <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" aria-hidden="true">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                      </svg>
+                    </button>
+                  </div>
+                  <span v-else class="table-session-id-text">—</span>
+                </template>
+                <template #filter="{ filterModel, filterCallback }">
+                  <Select
+                    v-model="filterModel.value"
+                    :options="tableFilterOptions.sessionIds"
+                    placeholder="Все"
+                    editable
+                    showClear
+                    overlay-class="history-filter-select-panel"
+                    class="history-filter-select"
+                    @update:modelValue="filterCallback()"
+                    @change="filterCallback()"
+                  />
+                </template>
+              </Column>
+
+              <Column field="complaintText" header="Текст жалобы" bodyClass="history-col-complaint" :showFilterMenu="false" style="min-width: 10rem">
+                <template #body="{ data }">
+                  <span class="td-complaint" :title="data.complaintText">{{ data.complaintText || '—' }}</span>
+                </template>
+                <template #filter="{ filterModel, filterCallback }">
+                  <Select
+                    v-model="filterModel.value"
+                    :options="historyComplaintFilterOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="Все"
+                    editable
+                    showClear
+                    overlay-class="history-filter-select-panel"
+                    class="history-filter-select"
+                    @update:modelValue="filterCallback()"
+                    @change="filterCallback()"
+                  />
+                </template>
+              </Column>
+
+              <Column field="detectedSymptoms" header="Симптомы" bodyClass="history-col-symptoms td-symptoms" :showFilterMenu="false" style="min-width: 14rem">
+                <template #body="{ data }">
+                  <div class="table-symptoms-group">
+                    <span
+                      v-for="symptom in data.detectedSymptoms"
+                      :key="symptom"
+                      class="symptom-pill-premium direct-pill"
+                      style="margin: 2px;"
+                    >
+                      <svg viewBox="0 0 24 24" width="10" height="10" stroke="currentColor" stroke-width="3" fill="none" class="check-symptom-svg">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                      </svg>
+                      <span class="symptom-pill-text">{{ symptom }}</span>
                     </span>
-                  </td>
-                  <td class="td-complaint" :title="record.complaintText" data-label="Текст жалобы">
-                    {{ record.complaintText }}
-                  </td>
-                  <td class="td-symptoms" data-label="Симптомы">
-                    <div class="table-symptoms-group">
-                      <span 
-                        v-for="symptom in record.detectedSymptoms" 
-                        :key="symptom" 
-                        class="symptom-pill-premium direct-pill"
-                        style="margin: 2px;"
+                    <span
+                      v-for="symptom in data.assumedSymptoms"
+                      :key="symptom"
+                      class="symptom-pill-premium assumed-pill"
+                      style="margin: 2px;"
+                    >
+                      <svg viewBox="0 0 24 24" width="10" height="10" stroke="currentColor" stroke-width="2.5" fill="none" class="assumed-symptom-svg">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                      </svg>
+                      <span class="symptom-pill-text">{{ symptom }}</span>
+                    </span>
+                    <span v-if="!data.detectedSymptoms?.length && !data.assumedSymptoms?.length" class="text-muted">—</span>
+                  </div>
+                </template>
+                <template #filter="{ filterModel, filterCallback }">
+                  <Select
+                    v-model="filterModel.value"
+                    :options="tableFilterOptions.symptoms"
+                    placeholder="Все"
+                    editable
+                    showClear
+                    overlay-class="history-filter-select-panel"
+                    class="history-filter-select"
+                    @update:modelValue="filterCallback()"
+                    @change="filterCallback()"
+                  />
+                </template>
+              </Column>
+
+              <Column field="results" header="Диагнозы" bodyClass="history-col-diseases td-diseases" :showFilterMenu="false" style="min-width: 16rem">
+                <template #body="{ data }">
+                  <div class="table-diseases-group" style="display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start; max-width: none;">
+                    <div
+                      v-for="res in data.results"
+                      :key="res.disease"
+                      class="history-disease-item"
+                      style="display: flex; flex-direction: column; align-items: flex-start; gap: 4px; width: 100%; padding-bottom: 6px;"
+                    >
+                      <div
+                        class="history-disease-header"
+                        style="display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; cursor: pointer; user-select: none;"
+                        @click="toggleHistoryDiseaseExpand(data.id, res.disease)"
                       >
-                        <svg viewBox="0 0 24 24" width="10" height="10" stroke="currentColor" stroke-width="3" fill="none" class="check-symptom-svg">
-                          <polyline points="20 6 9 17 4 12"></polyline>
-                        </svg>
-                        {{ symptom }}
-                      </span>
-                      <span 
-                        v-for="symptom in record.assumedSymptoms" 
-                        :key="symptom" 
-                        class="symptom-pill-premium assumed-pill"
-                        style="margin: 2px;"
+                        <span class="disease-name-bold">{{ res.disease }}</span>
+                        <span class="threat-micro-badge" :class="getThreatColorClass(res.threatLevel || 0)">
+                          {{ getThreatLabel(res.threatLevel || 0) }}
+                        </span>
+                        <span class="disease-chevron-icon" :class="{ 'chevron-rotated': expandedHistoryDiseases[`${data.id}_${res.disease}`] }">
+                          <svg viewBox="0 0 24 24" width="11" height="11" stroke="currentColor" stroke-width="3" fill="none">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                          </svg>
+                        </span>
+                      </div>
+                      <div
+                        v-if="expandedHistoryDiseases[`${data.id}_${res.disease}`]"
+                        class="history-disease-details"
+                        style="width: 100%; padding-left: 0.5rem; margin-top: 4px; color: var(--text-muted);"
                       >
-                        <svg viewBox="0 0 24 24" width="10" height="10" stroke="currentColor" stroke-width="2.5" fill="none" class="assumed-symptom-svg">
-                          <polyline points="20 6 9 17 4 12"></polyline>
-                        </svg>
-                        {{ symptom }}
-                      </span>
-                      <span v-if="!record.detectedSymptoms?.length && !record.assumedSymptoms?.length" class="text-muted">—</span>
-                    </div>
-                  </td>
-                  <td class="td-diseases" data-label="Диагнозы">
-                    <div class="table-diseases-group" style="display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start; max-width: none;">
-                      <div 
-                        v-for="res in record.results" 
-                        :key="res.disease" 
-                        class="history-disease-item"
-                        style="display: flex; flex-direction: column; align-items: flex-start; gap: 4px; width: 100%; padding-bottom: 6px;"
-                      >
-                        <div 
-                          style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.78rem; flex-wrap: wrap; cursor: pointer; user-select: none;"
-                          @click="toggleHistoryDiseaseExpand(record.id, res.disease)"
-                        >
-                          <span class="disease-name-bold" style="font-size: 0.78rem;">{{ res.disease }}</span>
-                          <span class="threat-micro-badge" :class="getThreatColorClass(res.threatLevel || 0)" style="font-size: 0.62rem; min-height: 16px; padding: 0px 6px; line-height: 16px;">
-                            {{ getThreatLabel(res.threatLevel || 0) }}
-                          </span>
-                          <!-- Interactive chevron -->
-                          <span class="disease-chevron-icon" :class="{ 'chevron-rotated': expandedHistoryDiseases[`${record.id}_${res.disease}`] }">
-                            <svg viewBox="0 0 24 24" width="11" height="11" stroke="currentColor" stroke-width="3" fill="none">
-                              <polyline points="6 9 12 15 18 9"></polyline>
-                            </svg>
-                          </span>
+                        <div style="margin-bottom: 6px; display: flex; flex-direction: column; gap: 4px;">
+                          <div style="display: flex; align-items: center; gap: 0.35rem;">
+                            <span class="priority-label">Дифференциальный вес:</span>
+                            <div class="diagnosis-priority-badge" :class="priorityClassForRecord(data, res)" title="Относительный дифференциальный вес">
+                              <span class="priority-value" style="font-weight: 800;">{{ formatDifferentialWeightForRecord(data, res) }}</span>
+                            </div>
+                          </div>
+                          <div>
+                            Совпадение по симптомам: <strong>{{ res.matchPercentage }}%</strong> ({{ res.matchingSymptomsCount }} из {{ res.totalDiseaseSymptomsCount }} симптомов)
+                          </div>
                         </div>
-                        
-                        <!-- Dropdown panel with matching symptoms info -->
-                        <div 
-                          v-if="expandedHistoryDiseases[`${record.id}_${res.disease}`]"
-                          style="width: 100%; padding-left: 0.5rem; margin-top: 4px; font-size: 0.75rem; color: var(--text-muted);"
-                        >
-                          <div style="margin-bottom: 6px; display: flex; flex-direction: column; gap: 4px;">
-                            <div style="display: flex; align-items: center; gap: 0.35rem;">
-                              <span class="priority-label">Дифференциальный вес:</span>
-                              <div class="diagnosis-priority-badge" :class="priorityClassForRecord(record, res)" style="font-size: 0.65rem; padding: 0.1rem 0.45rem; border-radius: 4px; gap: 0.2rem;" :title="`Относительный дифференциальный вес`">
-                                <span class="priority-value" style="font-weight: 800;">{{ formatDifferentialWeightForRecord(record, res) }}</span>
-                              </div>
-                            </div>
-                            <div>
-                              Совпадение по симптомам: <strong>{{ res.matchPercentage }}%</strong> ({{ res.matchingSymptomsCount }} из {{ res.totalDiseaseSymptomsCount }} симптомов)
-                            </div>
-                          </div>
-                          <div style="display: flex; flex-wrap: wrap; gap: 4px;">
-                            <span 
-                              v-for="symptom in res.matchedSymptoms" 
-                              :key="symptom" 
-                              class="symptom-pill-premium direct-pill"
-                              style="font-size: 0.7rem; padding: 0.1rem 0.4rem; min-height: auto;"
-                            >
-                              <svg viewBox="0 0 24 24" width="8" height="8" stroke="currentColor" stroke-width="3" fill="none" class="check-symptom-svg">
-                                <polyline points="20 6 9 17 4 12"></polyline>
-                              </svg>
-                              {{ symptom }}
-                            </span>
-                          </div>
+                        <div style="display: flex; flex-wrap: wrap; gap: 4px;">
+                          <span
+                            v-for="symptom in res.matchedSymptoms"
+                            :key="symptom"
+                            class="symptom-pill-premium direct-pill history-disease-symptom-pill"
+                          >
+                            <svg viewBox="0 0 24 24" width="7" height="7" stroke="currentColor" stroke-width="3" fill="none" class="check-symptom-svg">
+                              <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                            <span class="symptom-pill-text">{{ symptom }}</span>
+                          </span>
                         </div>
                       </div>
-                      <span v-if="!record.results?.length" class="text-muted">—</span>
                     </div>
-                  </td>
-                  <td class="td-actions" style="text-align: center;">
-                    <div style="display: inline-flex; gap: 8px; align-items: center; justify-content: center;">
-                      <button
-                        class="btn-download-history-pdf"
-                        @click.stop="downloadPdfReport(record)"
-                        title="Скачать PDF отчёт"
-                        aria-label="Скачать PDF отчёт"
-                      >
-                        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2.5" fill="none" style="display: block;">
-                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                          <polyline points="7 10 12 15 17 10"></polyline>
-                          <line x1="12" y1="15" x2="12" y2="3"></line>
-                        </svg>
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-                <tr v-if="finalFilteredAdminHistory.length === 0">
-                  <td colspan="7" style="text-align: center; padding: 3rem; color: var(--text-muted);">
-                    Записи, удовлетворяющие условиям фильтра, не найдены.
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+                    <span v-if="!data.results?.length" class="text-muted">—</span>
+                  </div>
+                </template>
+                <template #filter="{ filterModel, filterCallback }">
+                  <Select
+                    v-model="filterModel.value"
+                    :options="tableFilterOptions.diseases"
+                    placeholder="Все"
+                    editable
+                    showClear
+                    overlay-class="history-filter-select-panel"
+                    class="history-filter-select"
+                    @update:modelValue="filterCallback()"
+                    @change="filterCallback()"
+                  />
+                </template>
+              </Column>
+
+              <Column header="" bodyClass="history-col-actions td-actions" :showFilterMenu="false" style="width: 3rem; text-align: center">
+                <template #filter>
+                  <button
+                    v-if="hasActiveHistoryTableFilters"
+                    type="button"
+                    class="btn-clear-table-filters"
+                    title="Сбросить все фильтры"
+                    aria-label="Сбросить все фильтры"
+                    @click="clearHistoryTableFilters"
+                  >
+                    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" aria-hidden="true">
+                      <line x1="18" y1="6" x2="6" y2="18"></line>
+                      <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                  </button>
+                </template>
+                <template #body="{ data }">
+                  <button
+                    class="btn-download-history-pdf"
+                    @click.stop="downloadPdfReport(data)"
+                    title="Скачать отчёт"
+                    aria-label="Скачать отчёт"
+                  >
+                    <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2.5" fill="none" style="display: block;">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                      <polyline points="7 10 12 15 17 10"></polyline>
+                      <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                  </button>
+                </template>
+              </Column>
+            </DataTable>
           </div>
         </div>
 

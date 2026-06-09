@@ -12,7 +12,9 @@
     "fonts:sync": "node scripts/sync-brand-fonts.mjs"
   },
   "dependencies": {
+    "@primeuix/themes": "^2.0.3",
     "notivue": "^2.4.5",
+    "primevue": "^4.5.5",
     "vue": "^3.5.32"
   },
   "devDependencies": {
