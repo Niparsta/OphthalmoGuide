@@ -72,6 +72,7 @@
   --accent-light: rgba(2, 132, 199, 0.06);
   --accent-hover: #0369a1;
   --on-accent: #ffffff;
+  --brand-eye-color: #0284c7;
   
   --color-green: #10b981;
   --color-blue: #3b82f6;
@@ -263,7 +264,7 @@ body {
 .blinking-eye-logo {
   width: 28px;
   height: 28px;
-  color: var(--accent);
+  color: var(--brand-eye-color);
   transform-origin: 12px 12px;
   animation: blink-eye-anim 7s infinite ease-in-out;
   flex-shrink: 0;

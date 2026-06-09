@@ -38,7 +38,7 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     options.ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor | 
                                 Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto |
                                 Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedHost;
-    options.KnownNetworks.Clear();
+    options.KnownIPNetworks.Clear();
     options.KnownProxies.Clear();
 });
 
@@ -230,7 +230,7 @@ static X509Certificate2Collection LoadRussianTrustedCertificates()
     {
         try
         {
-            collection.Import(file);
+            collection.Add(X509CertificateLoader.LoadCertificateFromFile(file));
             Console.WriteLine($"[SSL] Загружен дополнительный корневой сертификат: {Path.GetFileName(file)}");
         }
         catch (Exception ex)
@@ -414,7 +414,7 @@ app.MapGet("/api/symptoms", async (OphthalmologyService service) =>
         var symptoms = await service.GetSymptomsListAsync();
         return Results.Ok(symptoms);
     }
-    catch (System.Exception ex)
+    catch (System.Exception)
     {
         return Results.Problem("Внутренняя ошибка сервера. Попробуйте позже.");
     }
@@ -429,7 +429,7 @@ app.MapGet("/api/diseases", async (OphthalmologyService service) =>
         var diseases = await service.GetDiseasesListAsync();
         return Results.Ok(diseases);
     }
-    catch (System.Exception ex)
+    catch (System.Exception)
     {
         return Results.Problem("Внутренняя ошибка сервера. Попробуйте позже.");
     }
@@ -444,7 +444,7 @@ app.MapPost("/api/update-data", async (UpdateDataRequest request, OphthalmologyS
         var success = await service.SaveDataAsync(request.Symptoms, request.Diseases);
         return Results.Ok(new { success });
     }
-    catch (System.Exception ex)
+    catch (System.Exception)
     {
         return Results.Problem("Внутренняя ошибка сервера. Попробуйте позже.");
     }
@@ -513,7 +513,7 @@ app.MapPost("/api/analyze", async (HttpContext context, AnalyzeRequest request, 
     {
         return Results.StatusCode(499);
     }
-    catch (System.Exception ex)
+    catch (System.Exception)
     {
         return Results.Problem("Не удалось выполнить анализ. Попробуйте позже.");
     }
@@ -597,7 +597,7 @@ app.MapGet("/api/history", async (HttpContext context, OphthalmologyService serv
         var history = await service.GetSessionHistoryAsync(sessionId);
         return Results.Ok(history);
     }
-    catch (System.Exception ex)
+    catch (System.Exception)
     {
         return Results.Problem("Не удалось загрузить историю сессий.");
     }
@@ -628,7 +628,7 @@ app.MapGet("/api/admin/history", async (OphthalmologyService service, string? fr
         var history = await service.GetAllSessionHistoryAsync(fromUtc, toUtc);
         return Results.Ok(history);
     }
-    catch (System.Exception ex)
+    catch (System.Exception)
     {
         return Results.Problem("Не удалось загрузить историю сессий.");
     }
@@ -644,7 +644,7 @@ app.MapDelete("/api/admin/history/bulk", async ([Microsoft.AspNetCore.Mvc.FromBo
         var count = await service.DeleteSessionHistoryRecordsAsync(ids);
         return Results.Ok(new { success = true, count });
     }
-    catch (System.Exception ex)
+    catch (System.Exception)
     {
         return Results.Problem("Не удалось удалить выбранные записи истории.");
     }

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using Backend.Models;
+using QuestPDF.Drawing;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
@@ -10,9 +11,18 @@ namespace Backend.Services
 {
     public class PdfExportService
     {
-        public PdfExportService()
+        private const string BrandFontFamily = "Plus Jakarta Sans";
+        private static readonly object BrandFontLock = new();
+        private static volatile bool _brandFontRegistered;
+
+        static PdfExportService()
         {
             QuestPDF.Settings.License = LicenseType.Community;
+        }
+
+        public PdfExportService()
+        {
+            EnsureBrandFontRegistered();
         }
 
         public static string GetFileName(DateTime reportTime)
@@ -40,10 +50,10 @@ namespace Backend.Services
                             row.RelativeItem().Column(column =>
                             {
                                 column.Item().Text("OphthalmoGuide")
+                                    .FontFamily(BrandFontFamily)
                                     .FontSize(24)
-                                    .ExtraBold()
                                     .FontColor("#0F172A");
-                                
+
                                 column.Item().PaddingTop(4).Text("Информационно-справочная система предварительной диагностики офтальмологических заболеваний")
                                     .FontSize(9)
                                     .FontColor("#64748B");
@@ -54,7 +64,7 @@ namespace Backend.Services
                                 column.Item().Text($"Дата: {reportTime:dd.MM.yyyy}")
                                     .FontSize(9)
                                     .FontColor(Colors.Grey.Darken2);
-                                column.Item().Text($"Время: {reportTime:HH:mm:ss}")
+                                column.Item().Text($"Время: {reportTime:HH:mm:ss} мск")
                                     .FontSize(9)
                                     .FontColor(Colors.Grey.Darken2);
                             });
@@ -238,6 +248,36 @@ namespace Backend.Services
             }
 
             return DateTime.Now;
+        }
+
+        private static void EnsureBrandFontRegistered()
+        {
+            if (_brandFontRegistered)
+            {
+                return;
+            }
+
+            lock (BrandFontLock)
+            {
+                if (_brandFontRegistered)
+                {
+                    return;
+                }
+
+                var fontPath = Path.Combine(
+                    AppContext.BaseDirectory,
+                    "Assets",
+                    "Fonts",
+                    "plus-jakarta-sans-latin-800-normal.woff");
+
+                if (File.Exists(fontPath))
+                {
+                    using var stream = File.OpenRead(fontPath);
+                    FontManager.RegisterFontWithCustomName(BrandFontFamily, stream);
+                }
+
+                _brandFontRegistered = true;
+            }
         }
 
         private string GetThreatLevelText(int level)

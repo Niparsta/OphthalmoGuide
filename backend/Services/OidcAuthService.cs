@@ -878,7 +878,7 @@ namespace Backend.Services
             }
 
             var fp = GetTokenFingerprint(refreshToken);
-            await redis.GetDatabase().KeyDeleteAsync($"refresh_sid:{fp}");
+            await redis!.GetDatabase().KeyDeleteAsync($"refresh_sid:{fp}");
         }
 
         private static async Task<bool> IsAccessTokenActiveAtIdpAsync(
