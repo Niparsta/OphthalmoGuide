@@ -508,6 +508,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
+  overflow: visible;
 }
 
 .section-title {
@@ -524,12 +525,13 @@ body {
   background-color: var(--bg-card);
   border: 1.5px solid var(--border-color);
   border-radius: 16px;
-  padding: 1rem;
+  padding: 1rem 1rem 0;
   display: flex;
   flex-direction: column;
   transition: var(--transition-smooth);
   box-shadow: var(--shadow-sm);
   position: relative;
+  overflow: visible;
 }
 
 .textarea-clear-btn {
@@ -565,6 +567,13 @@ body {
   box-shadow: var(--shadow-focus), var(--shadow-md) !important;
 }
 
+.textarea-field-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .textarea-container-premium textarea {
   background: none;
   border: none;
@@ -578,6 +587,46 @@ body {
   max-height: 420px;
   overflow-y: auto;
   padding: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.textarea-container-premium textarea.textarea-with-status {
+  padding-bottom: 2.1rem;
+}
+
+.textarea-status-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 0.45rem 0 0.1rem;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent 0%, var(--bg-card) 48%);
+  font-size: 0.82rem;
+  font-weight: 650;
+  line-height: 1.3;
+  z-index: 2;
+}
+
+.textarea-status-overlay.status-recording {
+  color: var(--color-red);
+  animation: textarea-status-blink-recording 1s ease-in-out infinite;
+}
+
+.textarea-status-overlay.status-recognizing {
+  color: var(--accent);
+  animation: textarea-status-blink-recognizing 1.15s ease-in-out infinite;
+}
+
+@keyframes textarea-status-blink-recording {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@keyframes textarea-status-blink-recognizing {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
 }
 
 .textarea-container-premium textarea::placeholder {
@@ -616,19 +665,22 @@ body {
   justify-content: space-between;
   align-items: center;
   border-top: 1px solid var(--border-color);
-  padding-top: 0.9rem;
   margin-top: 0.75rem;
+  padding: 0.75rem 0;
   gap: 0.75rem;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
+  overflow: visible;
 }
 
 .diagnostic-actions-left {
   display: flex;
   align-items: center;
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 0.75rem;
+  overflow: visible;
+  row-gap: 0.5rem;
 }
 
 .audio-controls-group {
@@ -636,6 +688,9 @@ body {
   align-items: center;
   gap: 0.75rem;
   flex-shrink: 0;
+  padding: 0 6px;
+  margin: 0 -6px;
+  overflow: visible;
 }
 
 /* Clean circular Microphone recording button */
@@ -644,10 +699,15 @@ body {
   align-items: center;
   gap: 0.5rem;
   position: relative;
+  padding: 0 4px;
+  margin: 0 -4px;
+  overflow: visible;
 }
 
 .btn-mic-record-clean {
   position: relative;
+  z-index: 1;
+  flex-shrink: 0;
   width: 36px;
   height: 36px;
   border-radius: 50%;
@@ -733,6 +793,8 @@ body {
 /* Speaker Toggle Button for Auto-readout (TTS) */
 .btn-speaker-auto-play {
   position: relative;
+  z-index: 1;
+  flex-shrink: 0;
   width: 36px;
   height: 36px;
   border-radius: 50%;
@@ -769,6 +831,8 @@ body {
 /* Play/Stop TTS toggle button styling */
 .btn-tts-toggle {
   position: relative;
+  z-index: 1;
+  flex-shrink: 0;
   width: 36px;
   height: 36px;
   border-radius: 50%;
@@ -814,27 +878,40 @@ body {
 }
 
 .btn-clean-text {
-  background: none;
-  border: none;
-  font-size: 0.8rem;
-  color: var(--text-muted);
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  line-height: 0;
+  border-radius: 50%;
+  background-color: var(--bg-card-sub);
+  border: 1px solid var(--border-color);
+  color: var(--color-red, #ef4444);
   cursor: pointer;
-  padding: 0.35rem 0.75rem;
-  border-radius: 6px;
-  font-weight: 500;
   transition: var(--transition-smooth);
+  box-shadow: var(--shadow-sm);
+  outline: none;
   flex-shrink: 0;
-  white-space: nowrap;
+}
+
+.btn-clean-text svg {
+  display: block;
 }
 
 .btn-clean-text:hover:not(:disabled) {
-  color: var(--color-red);
-  background-color: rgba(239, 68, 68, 0.05);
+  color: var(--color-red, #ef4444);
+  background-color: var(--bg-hover);
+  transform: scale(1.05);
 }
 
 .btn-clean-text:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+  transform: none;
 }
 
 /* Preset pills */
@@ -3434,6 +3511,16 @@ body {
   .admin-panel-slide-enter-from {
     transform: none;
   }
+
+  .textarea-status-overlay.status-recording,
+  .textarea-status-overlay.status-recognizing {
+    animation: none;
+    opacity: 1;
+  }
+
+  .btn-clean-text:hover:not(:disabled) {
+    transform: none;
+  }
 }
 
 .nav-tab-logout {
@@ -3536,20 +3623,14 @@ body {
     flex-direction: row;
     align-items: center;
     gap: 0.5rem;
+    overflow: visible;
   }
 
   .diagnostic-actions-left {
     justify-content: flex-start;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-
-  .diagnostic-actions-left::-webkit-scrollbar {
-    display: none;
-  }
-
-  .status-tip {
-    white-space: nowrap;
+    flex-wrap: wrap;
+    overflow: visible;
+    row-gap: 0.5rem;
   }
 
   .history-period-filter {

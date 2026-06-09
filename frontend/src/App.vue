@@ -2169,15 +2169,29 @@ onUnmounted(() => {
             
             <!-- Sleek styled textarea wrapper with reactive state borders -->
             <div class="textarea-container-premium" :class="borderStateClass">
-              <textarea 
-                ref="textareaRef"
-                v-model="complaintText" 
-                placeholder="Расскажите, что Вы чувствуете? Например: зуд и жжение век, покраснение, помутнение зрения..."
-                rows="5"
-                :disabled="isAnalyzing"
-                @input="resizeTextarea"
-              ></textarea>
-
+              <div class="textarea-field-wrap">
+                <textarea 
+                  ref="textareaRef"
+                  v-model="complaintText" 
+                  placeholder="Расскажите, что Вы чувствуете? Например: зуд и жжение век, покраснение, помутнение зрения..."
+                  rows="5"
+                  :disabled="isAnalyzing"
+                  :class="{ 'textarea-with-status': isRecording || speechRecognizing }"
+                  @input="resizeTextarea"
+                ></textarea>
+                <div
+                  v-if="isRecording || speechRecognizing"
+                  class="textarea-status-overlay"
+                  :class="{
+                    'status-recording': isRecording,
+                    'status-recognizing': !isRecording && speechRecognizing
+                  }"
+                  aria-live="polite"
+                >
+                  <span v-if="isRecording">Идет запись...</span>
+                  <span v-else>Распознавание...</span>
+                </div>
+              </div>
 
               
               <!-- Bottom Toolbar inside input box -->
@@ -2241,19 +2255,22 @@ onUnmounted(() => {
                     </svg>
                   </button>
 
-                  <span v-if="isRecording" class="status-tip">Идет запись...</span>
-                  <span v-else-if="speechRecognizing" class="status-tip">Распознавание...</span>
                 </div>
 
                 <!-- Clear text button (ONLY the input field).
                      Click the eye logo in the header for full reset (text + analysis result). -->
-                <button 
-                  class="btn-clean-text" 
-                  @click="clearComplaintText" 
+                <button
+                  type="button"
+                  class="btn-clean-text"
+                  @click="clearComplaintText"
                   :disabled="!complaintText || isAnalyzing"
+                  title="Очистить текст жалобы"
                   aria-label="Очистить текст жалобы"
                 >
-                  Очистить
+                  <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" aria-hidden="true">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                  </svg>
                 </button>
               </div>
             </div>
