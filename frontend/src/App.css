@@ -72,6 +72,9 @@
   --accent-light: rgba(2, 132, 199, 0.06);
   --accent-hover: #0369a1;
   --on-accent: #ffffff;
+  --recognition-color: #0284c7;
+  --recognition-color-hover: #0369a1;
+  --on-recognition-color: #ffffff;
   --brand-eye-color: #0284c7;
   
   --color-green: #10b981;
@@ -132,11 +135,6 @@
     --scrollbar-thumb-hover: rgba(255, 255, 255, 0.24);
 
     color-scheme: dark;
-  }
-
-  .btn-mic-record-clean.converting {
-    color: var(--on-accent);
-    box-shadow: 0 0 12px rgba(255, 255, 255, 0.12);
   }
 
   .search-input-wrapper-clean input:focus {
@@ -615,7 +613,7 @@ body {
 }
 
 .textarea-status-overlay.status-recognizing {
-  color: var(--accent);
+  color: var(--recognition-color);
   animation: textarea-status-blink-recognizing 1.15s ease-in-out infinite;
 }
 
@@ -736,21 +734,23 @@ body {
   box-shadow: 0 0 12px rgba(239, 68, 68, 0.35);
 }
 
-.btn-mic-record-clean.recording:hover {
+.btn-mic-record-clean.recording:hover:not(:disabled) {
   background-color: rgba(239, 68, 68, 0.85);
   border-color: rgba(239, 68, 68, 0.85);
+  color: #ffffff;
 }
 
 .btn-mic-record-clean.converting {
-  background-color: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
+  background-color: var(--recognition-color);
+  border-color: var(--recognition-color);
+  color: var(--on-recognition-color);
   box-shadow: 0 0 12px rgba(2, 132, 199, 0.35);
 }
 
-.btn-mic-record-clean.converting:hover {
-  background-color: var(--accent-hover);
-  border-color: var(--accent-hover);
+.btn-mic-record-clean.converting:hover:not(:disabled) {
+  background-color: var(--recognition-color-hover);
+  border-color: var(--recognition-color-hover);
+  color: var(--on-recognition-color);
 }
 
 /* Glowing ripple rings on recording */
