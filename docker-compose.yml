@@ -42,13 +42,18 @@ services:
       Authentik__AdminGroup: "ophthalmoguide Admins"
       Startup__FailOnErrors: "true"
       Startup__RequireSeedData: "true"
+      Startup__ValkeyWaitSeconds: "120"
       SaluteSpeech__AuthorizationKey: "${SALUTESPEECH_AUTHORIZATION_KEY}"
       SaluteSpeech__AllowInsecureTls: "false"
     depends_on:
-      - postgres
-      - valkey
-      - ollama
-      - authentik-server
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+      authentik-server:
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5190/health"]
       interval: 10s
@@ -72,8 +77,10 @@ services:
       Vk__AllowedUserIds: "${VK_ALLOWED_USER_IDS:-}"
       Prometheus__Port: "8082"
     depends_on:
-      - backend
-      - valkey
+      backend:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
     restart: unless-stopped
 
   ollama:
@@ -97,6 +104,12 @@ services:
     container_name: ophthalmoguide_valkey
     volumes:
       - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
     restart: unless-stopped
 
   postgres:
@@ -110,6 +123,12 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
 
   authentik-server:

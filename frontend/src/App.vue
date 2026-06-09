@@ -4,7 +4,7 @@ import { Notivue, Notifications, push, darkTheme, lightTheme } from 'notivue'
 import AppBrand from './components/AppBrand.vue'
 import ConfirmModal from './components/ConfirmModal.vue'
 import { API_BASE, apiUrl } from './services/api'
-import forbiddenHtml from '../public/403.html?raw' // HMR touch
+import forbiddenHtml from '../public/403.html?raw'
 import unauthorizedHtml from '../public/401.html?raw'
 import { createConnectivityMonitor, type ConnectivityMonitor } from './connectivityMonitor'
 
@@ -106,12 +106,12 @@ const sessionId = ref('')
 
 // Access Control
 const isAdmin = ref(false)
-const isAdminUnauthorized = ref(false)
 const onAdminRoute = ref(false)
 const adminBootstrapLoading = ref(false)
 const adminBootstrapFailed = ref(false)
 const authConfig = ref<{ enabled: boolean; authority: string; clientId: string; redirectUri?: string } | null>(null)
 const OAUTH_REDIRECT_URI_KEY = 'oauth_redirect_uri'
+const OAUTH_STATE_KEY = 'oauth_state'
 let adminSessionCheckInterval: ReturnType<typeof setInterval> | null = null
 let adminSessionCheckInFlight = false
 
@@ -120,14 +120,31 @@ function isAdminPath(): boolean {
   return path === '/admin' || path === '/admin/'
 }
 
+function createOAuthState(): string {
+  const value = window.crypto?.randomUUID?.()
+    ?? `st_${Math.random().toString(36).slice(2)}_${Date.now()}`
+  sessionStorage.setItem(OAUTH_STATE_KEY, value)
+  return value
+}
+
+function consumeOAuthState(received: string | null): boolean {
+  const expected = sessionStorage.getItem(OAUTH_STATE_KEY)
+  sessionStorage.removeItem(OAUTH_STATE_KEY)
+  return !!received && !!expected && received === expected
+}
+
 function isOAuthCallbackPending(): boolean {
   const params = new URLSearchParams(window.location.search)
-  return params.get('state') === 'admin' && !!params.get('code')
+  const code = params.get('code')
+  const state = params.get('state')
+  if (!code || !state) return false
+  const expected = sessionStorage.getItem(OAUTH_STATE_KEY)
+  return !!expected && state === expected
 }
 
 /** Завершает админ-сессию и возвращает на главную без автоматического OAuth (ломает цикл SSO). */
-function exitAdminAfterSessionLoss(message: string) {
-  clearAdminSession()
+async function exitAdminAfterSessionLoss(message: string) {
+  await clearAdminSession()
   if (isAdminPath()) {
     window.history.replaceState({}, document.title, '/')
   }
@@ -135,18 +152,32 @@ function exitAdminAfterSessionLoss(message: string) {
   showNotification(message, 'warning')
 }
 
-function showForbiddenPage() {
-  isAdmin.value = false
-  document.open()
-  document.write(forbiddenHtml)
+function replaceDocumentWithHtml(html: string) {
+  document.open('text/html', 'replace')
+  document.write(html)
   document.close()
 }
 
-function showUnauthorizedPage() {
+function stopAdminSessionPolling() {
+  if (adminSessionCheckInterval) {
+    clearInterval(adminSessionCheckInterval)
+    adminSessionCheckInterval = null
+  }
+}
+
+function showForbiddenPage() {
   isAdmin.value = false
-  document.open()
-  document.write(unauthorizedHtml)
-  document.close()
+  onAdminRoute.value = false
+  stopAdminSessionPolling()
+  replaceDocumentWithHtml(forbiddenHtml)
+}
+
+async function showUnauthorizedPage() {
+  isAdmin.value = false
+  onAdminRoute.value = false
+  stopAdminSessionPolling()
+  await clearAdminSession()
+  replaceDocumentWithHtml(unauthorizedHtml)
 }
 
 const authentikUserPortalUrl = computed(() => {
@@ -472,69 +503,11 @@ function buildAuthentikLogoutUrl(): string | null {
   return `${base}/flows/-/default/invalidation/?${params.toString()}`
 }
 
-function getCookie(name: string): string | null {
-  const nameEQ = name + "="
-  const ca = document.cookie.split(';')
-  for (const item of ca) {
-    const c = item.trim()
-    if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length)
-  }
-  return null
-}
-
-function setCookie(name: string, value: string, maxAgeSeconds?: number) {
-  let cookieString = `${name}=${value}; Path=/; SameSite=Lax; Secure`
-  if (typeof maxAgeSeconds === 'number') {
-    cookieString += `; Max-Age=${maxAgeSeconds}`
-  }
-  document.cookie = cookieString
-}
-
-function deleteCookie(name: string) {
-  document.cookie = `${name}=; Path=/; SameSite=Lax; Secure; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0`
-}
-
-function getTokenMaxAge(token: string): number {
-  try {
-    const base64Url = token.split('.')[1]
-    if (!base64Url) return 3600
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
-    const jsonPayload = decodeURIComponent(window.atob(base64).split('').map(function(c) {
-      return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
-    }).join(''))
-    const payload = JSON.parse(jsonPayload)
-    if (!payload.exp) return 3600
-    const remaining = Math.floor(payload.exp - Date.now() / 1000)
-    return remaining > 0 ? remaining : 0
-  } catch {
-    return 3600
-  }
-}
-
-function isTokenExpired(token: string): boolean {
-  try {
-    const base64Url = token.split('.')[1]
-    if (!base64Url) return true
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
-    const jsonPayload = decodeURIComponent(window.atob(base64).split('').map(function(c) {
-      return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
-    }).join(''))
-    const payload = JSON.parse(jsonPayload)
-    if (!payload.exp) return false
-    return Date.now() / 1000 >= payload.exp - 10
-  } catch {
-    return true
-  }
-}
+type AdminSessionStatus = 'ok' | 'unauthorized' | 'forbidden' | 'error'
 
 let isRefreshingPromise: Promise<boolean> | null = null
 
 async function refreshAdminToken(): Promise<boolean> {
-  const refreshToken = getCookie('admin_refresh_token')
-  if (!refreshToken) {
-    return false
-  }
-
   if (isRefreshingPromise) {
     return isRefreshingPromise
   }
@@ -544,31 +517,38 @@ async function refreshAdminToken(): Promise<boolean> {
       const res = await fetch(`${API_BASE}/api/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken })
+        credentials: 'include',
+        body: JSON.stringify({}),
       })
-
-      if (res.ok) {
-        const data = await res.json()
-        if (data.access_token) {
-          setCookie('admin_token', data.access_token)
-          if (data.refresh_token) {
-            setCookie('admin_refresh_token', data.refresh_token)
-          }
-          return true
-        }
-      }
+      return res.ok
     } catch (e) {
       console.error('[OIDC] Failed to refresh token:', e)
+      return false
     }
-    
-    clearAdminSession()
-    return false
   })()
 
   try {
     return await isRefreshingPromise
   } finally {
     isRefreshingPromise = null
+  }
+}
+
+async function resolveAdminSession(): Promise<AdminSessionStatus> {
+  try {
+    const fetchSession = () => fetch(`${API_BASE}/api/admin/session`, { credentials: 'include' })
+    let res = await fetchSession()
+    if (res.status === 401) {
+      const refreshed = await refreshAdminToken()
+      if (!refreshed) return 'unauthorized'
+      res = await fetchSession()
+    }
+    if (res.ok) return 'ok'
+    if (res.status === 403) return 'forbidden'
+    if (res.status === 401) return 'unauthorized'
+    return 'error'
+  } catch {
+    return 'error'
   }
 }
 
@@ -585,19 +565,30 @@ async function redirectToAuthentik() {
       redirect_uri: redirectUri,
       response_type: 'code',
       scope: 'openid profile email offline_access',
-      state: 'admin',
+      state: createOAuthState(),
     })
     window.location.assign(`${authorityBase}/application/o/authorize/?${params.toString()}`)
   }
 }
 
-function clearAdminSession() {
-  deleteCookie('admin_token')
-  deleteCookie('admin_refresh_token')
+function resetAdminUIState() {
   isAdmin.value = false
-  isAdminUnauthorized.value = false
   adminBootstrapLoading.value = false
   adminBootstrapFailed.value = false
+}
+
+async function clearAdminSession() {
+  resetAdminUIState()
+  try {
+    await fetch(`${API_BASE}/api/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+  } catch {
+    // best-effort cookie cleanup on the server
+  }
 }
 
 async function bootstrapAdminPanel(): Promise<boolean> {
@@ -616,7 +607,6 @@ async function bootstrapAdminPanel(): Promise<boolean> {
 
 async function enterDemoAdminMode() {
   isAdmin.value = false
-  isAdminUnauthorized.value = false
   const ok = await bootstrapAdminPanel()
   if (ok) {
     isAdmin.value = true
@@ -639,6 +629,7 @@ async function handleAuthentikCallback() {
     showNotification('Не удалось войти. Попробуйте ещё раз.', 'error')
     window.history.replaceState({}, document.title, window.location.pathname)
     sessionStorage.removeItem(OAUTH_REDIRECT_URI_KEY)
+    sessionStorage.removeItem(OAUTH_STATE_KEY)
     return
   }
 
@@ -647,11 +638,7 @@ async function handleAuthentikCallback() {
 
   if (!code) return
 
-  // Старый просроченный токен не должен мешать обмену authorization code.
-  deleteCookie('admin_token')
-  deleteCookie('admin_refresh_token')
-
-  if (state !== 'admin') {
+  if (!consumeOAuthState(state)) {
     showNotification('Не удалось войти. Попробуйте ещё раз.', 'error')
     window.history.replaceState({}, document.title, window.location.pathname)
     return
@@ -662,19 +649,13 @@ async function handleAuthentikCallback() {
     const res = await fetch(`${API_BASE}/api/auth/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ code, redirectUri })
     })
     if (res.ok) {
-      const data = await res.json()
-      if (data.access_token) {
-        setCookie('admin_token', data.access_token)
-        if (data.refresh_token) {
-          setCookie('admin_refresh_token', data.refresh_token)
-        }
-        sessionStorage.removeItem(OAUTH_REDIRECT_URI_KEY)
-        window.location.replace(`${window.location.origin}/admin/`)
-        return
-      }
+      sessionStorage.removeItem(OAUTH_REDIRECT_URI_KEY)
+      window.location.replace(`${window.location.origin}/admin/`)
+      return
     }
 
     window.history.replaceState({}, document.title, window.location.pathname)
@@ -693,26 +674,20 @@ async function logoutAdmin() {
     await fetchConfig()
   }
 
-  const token = getCookie('admin_token')
-  const refreshToken = getCookie('admin_refresh_token')
-
-  if (token) {
-    try {
-      await fetch(`${API_BASE}/api/auth/logout`, {
-        method: 'POST',
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ refreshToken })
-      })
-    } catch {
-      // logout notification to backend is best-effort
-    }
+  try {
+    await fetch(`${API_BASE}/api/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+  } catch {
+    // logout notification to backend is best-effort
   }
 
-  clearAdminSession()
+  resetAdminUIState()
   sessionStorage.removeItem(OAUTH_REDIRECT_URI_KEY)
+  sessionStorage.removeItem(OAUTH_STATE_KEY)
   sessionStorage.setItem('logged_out_notification', 'true')
   window.location.href = '/'
 }
@@ -721,32 +696,14 @@ async function logoutAdmin() {
 async function validateAdminSessionOnly() {
   if (!isAdmin.value || !isAdminPath() || isOAuthCallbackPending()) return
 
-  let token = getCookie('admin_token')
-  if (!token || isTokenExpired(token)) {
-    const ok = await refreshAdminToken()
-    if (ok) {
-      token = getCookie('admin_token')
-    } else {
-      exitAdminAfterSessionLoss('Сессия истекла – авторизуйтесь повторно')
-      return
-    }
-  }
-
-  try {
-    const res = await fetch(`${API_BASE}/api/admin/session`, {
-      headers: { Authorization: `Bearer ${token}` }
-    })
-    if (!res.ok) {
-      if (res.status === 403) {
-        showForbiddenPage()
-      } else if (res.status === 401) {
-        showUnauthorizedPage()
-      } else {
-        exitAdminAfterSessionLoss('Сессия истекла – авторизуйтесь повторно')
-      }
-    }
-  } catch {
-	  
+  const status = await resolveAdminSession()
+  if (status === 'ok') return
+  if (status === 'forbidden') {
+    showForbiddenPage()
+  } else if (status === 'unauthorized') {
+    await showUnauthorizedPage()
+  } else {
+    void exitAdminAfterSessionLoss('Сессия истекла – авторизуйтесь повторно')
   }
 }
 
@@ -792,63 +749,27 @@ async function checkAdminRoute(options: { userInitiated?: boolean } = {}) {
         return
       }
 
-      const token = getCookie('admin_token')
-      if (!token) {
-        if (code) {
-          onAdminRoute.value = true
-          return // Let handleAuthentikCallback handle it
-        }
-
-        if (urlParams.get('login') === 'true') {
-          if (!authConfig.value) {
-            await fetchConfig()
-          }
-          if (authConfig.value?.enabled) {
-            redirectToAuthentik()
-          } else {
-            await enterDemoAdminMode()
-          }
-          return
-        }
-
+      if (code) {
         onAdminRoute.value = true
-        showUnauthorizedPage()
+        return // handleAuthentikCallback обрабатывает OAuth callback
+      }
+
+      if (urlParams.get('login') === 'true') {
+        if (!authConfig.value) {
+          await fetchConfig()
+        }
+        if (authConfig.value?.enabled) {
+          redirectToAuthentik()
+        } else {
+          await enterDemoAdminMode()
+        }
         return
       }
-      
-      let activeToken = token
-      if (isTokenExpired(token)) {
-        const ok = await refreshAdminToken()
-        if (ok) {
-          activeToken = getCookie('admin_token') || ''
-        } else {
-          clearAdminSession()
-          onAdminRoute.value = true
-          showUnauthorizedPage()
-          return
-        }
-      }
-      
-      // Validate token against a lightweight AdminOnly endpoint
+
+      let sessionStatus: AdminSessionStatus = 'error'
       try {
         adminBootstrapLoading.value = true
-        const res = await fetch(`${API_BASE}/api/admin/session`, {
-          headers: {
-            'Authorization': `Bearer ${activeToken}`
-          }
-        })
-        if (!res.ok) {
-          onAdminRoute.value = true
-          if (res.status === 403) {
-            showForbiddenPage()
-          } else if (res.status === 401) {
-            clearAdminSession()
-            showUnauthorizedPage()
-          } else {
-            exitAdminAfterSessionLoss('Сессия истекла – авторизуйтесь повторно')
-          }
-          return
-        }
+        sessionStatus = await resolveAdminSession()
       } catch {
         onAdminRoute.value = true
         adminBootstrapFailed.value = true
@@ -856,8 +777,19 @@ async function checkAdminRoute(options: { userInitiated?: boolean } = {}) {
       } finally {
         adminBootstrapLoading.value = false
       }
-      
-      isAdminUnauthorized.value = false
+
+      if (sessionStatus !== 'ok') {
+        onAdminRoute.value = true
+        if (sessionStatus === 'forbidden') {
+          showForbiddenPage()
+        } else if (sessionStatus === 'unauthorized') {
+          await showUnauthorizedPage()
+        } else {
+          void exitAdminAfterSessionLoss('Сессия истекла – авторизуйтесь повторно')
+        }
+        return
+      }
+
       const ok = await bootstrapAdminPanel()
       if (ok) {
         isAdmin.value = true
@@ -871,7 +803,6 @@ async function checkAdminRoute(options: { userInitiated?: boolean } = {}) {
       }
     } else {
       isAdmin.value = false
-      isAdminUnauthorized.value = false
       adminBootstrapFailed.value = false
       adminBootstrapLoading.value = false
       activeTab.value = 'diagnostics'
@@ -883,61 +814,55 @@ async function checkAdminRoute(options: { userInitiated?: boolean } = {}) {
 }
 
 function initSession() {
-  let id = localStorage.getItem('ophthalmoguide_session_id')
+  let id = localStorage.getItem('og_session_id')
   if (!id) {
     id = 'sess_' + (window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : Math.random().toString(36).substring(2, 15) + '_' + Date.now())
-    localStorage.setItem('ophthalmoguide_session_id', id)
+    localStorage.setItem('og_session_id', id)
   }
   sessionId.value = id
 }
 
 // Global API Fetch helper with headers
 async function apiFetch(endpoint: string, options: Omit<RequestInit, 'body'> & { body?: any } = {}) {
-  let token = getCookie('admin_token')
-  
-  if (token && (isAdmin.value || isAdminUnauthorized.value || isAdminPath())) {
-    if (isTokenExpired(token)) {
-      const ok = await refreshAdminToken()
-      if (ok) {
-        token = getCookie('admin_token')
-      } else {
-        showUnauthorizedPage()
-        throw new Error('session_expired')
-      }
-    }
-  }
+  const useAdminCredentials = isAdmin.value || isAdminPath()
 
   const headers: Record<string, string> = {
     'Session-Id': sessionId.value,
     ...(options.headers as Record<string, string> || {})
   }
-  // Просроченный admin_token не отправляем на публичные API – иначе JWT middleware может отклонить запрос.
-  if (token && (isAdmin.value || isAdminUnauthorized.value || isAdminPath())) {
-    headers['Authorization'] = `Bearer ${token}`
-  }
-  
+
   let fetchBody: any = options.body
   if (fetchBody && !(fetchBody instanceof Blob) && !(fetchBody instanceof FormData) && typeof fetchBody === 'object') {
     fetchBody = JSON.stringify(fetchBody)
     headers['Content-Type'] = 'application/json'
   }
-  
-  const response = await fetch(apiUrl(endpoint), {
+
+  const doFetch = () => fetch(apiUrl(endpoint), {
     ...options,
     body: fetchBody,
-    headers
+    headers,
+    credentials: useAdminCredentials ? 'include' : options.credentials,
   })
-  
+
+  let response = await doFetch()
+
+  if (response.status === 401 && useAdminCredentials) {
+    const refreshed = await refreshAdminToken()
+    if (refreshed) {
+      response = await doFetch()
+    }
+  }
+
   if (!response.ok) {
-    if (response.status === 401 && (isAdmin.value || isAdminUnauthorized.value)) {
-      showUnauthorizedPage()
-    } else if (response.status === 403 && (isAdmin.value || isAdminUnauthorized.value)) {
+    if (response.status === 401 && (isAdmin.value || isAdminPath())) {
+      void showUnauthorizedPage()
+    } else if (response.status === 403 && (isAdmin.value || isAdminPath())) {
       showForbiddenPage()
     }
     await response.text()
     throw new Error('request_failed')
   }
-  
+
   return response
 }
 
@@ -2055,7 +1980,7 @@ onUnmounted(() => {
     }"
   >
     <!-- Floating Admin entry corner -->
-    <div v-if="!isAdmin && !isAdminUnauthorized" class="admin-entry-corner">
+    <div v-if="!isAdmin" class="admin-entry-corner">
       <a 
         href="/admin/" 
         class="btn-admin-login" 
@@ -2086,8 +2011,8 @@ onUnmounted(() => {
     />
 
 
-    <!-- Header Block (Only visible to Admin or if Unauthorized Admin Attempt) -->
-    <header v-if="isAdmin || isAdminUnauthorized" class="app-header-premium">
+    <!-- Header Block (Only visible to Admin) -->
+    <header v-if="isAdmin" class="app-header-premium">
       <!-- Desktop navigation tabs -->
       <nav v-if="isAdmin" class="app-nav-premium app-nav-desktop" aria-label="Навигация администратора">
         <button 
@@ -2156,38 +2081,8 @@ onUnmounted(() => {
         </button>
       </nav>
 
-      <!-- Desktop: settings / logout when logged in but not in admin group -->
-      <nav
-        v-if="isAdminUnauthorized && authConfig?.enabled"
-        class="app-nav-premium app-nav-desktop"
-        aria-label="Действия учётной записи"
-      >
-        <a
-          :href="authentikUserPortalUrl"
-          target="_blank"
-          class="nav-tab nav-tab-settings"
-        >
-          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" aria-hidden="true">
-            <circle cx="12" cy="12" r="3"></circle>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-          </svg>
-          <span>Настройки пользователя</span>
-        </a>
-        <button
-          class="nav-tab nav-tab-logout"
-          @click="logoutAdmin"
-        >
-          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" aria-hidden="true">
-            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-            <polyline points="16 17 21 12 16 7"></polyline>
-            <line x1="21" y1="12" x2="9" y2="12"></line>
-          </svg>
-          <span>Выйти</span>
-        </button>
-      </nav>
-
       <!-- Mobile: settings / logout only (main tabs move to bottom bar) -->
-      <div v-if="(isAdmin || isAdminUnauthorized) && authConfig?.enabled" class="app-admin-mobile-actions">
+      <div v-if="isAdmin && authConfig?.enabled" class="app-admin-mobile-actions">
         <a 
           :href="authentikUserPortalUrl"
           target="_blank"
@@ -2218,47 +2113,13 @@ onUnmounted(() => {
     <!-- Workspace View Panels -->
     <main
       class="app-workspace-container"
-      :class="{ 'with-admin-nav': isAdmin || isAdminUnauthorized }"
+      :class="{ 'with-admin-nav': isAdmin }"
     >
       <Transition name="admin-panel-slide" mode="out-in">
 
-      <!-- State: Admin Unauthorized (Access Denied) -->
-        <section v-if="isAdminUnauthorized" key="unauthorized" class="diagnostics-panel-centered admin-workspace-panel">
-          <div class="centered-workspace-card">
-            
-            <AppBrand danger />
-
-            <div class="workspace-card-wrapper admin-access-denied-card">
-              <div class="admin-access-denied-icon" aria-hidden="true">
-                <svg
-                  viewBox="0 0 24 24"
-                  width="36"
-                  height="36"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  fill="none"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <circle cx="12" cy="12" r="10"></circle>
-                  <line x1="12" y1="8" x2="12" y2="12"></line>
-                  <line x1="12" y1="16" x2="12.01" y2="16"></line>
-                </svg>
-              </div>
-              <h2 class="admin-access-denied-title">
-                Доступ ограничен
-              </h2>
-              <p class="admin-access-denied-text">
-                Вам не выписали рецепт для просмотра этого раздела.
-              </p>
-            </div>
-
-          </div>
-        </section>
-
         <!-- Tab 1: Centered Diagnostic Form -->
         <section
-          v-else-if="activeTab === 'diagnostics'"
+          v-if="activeTab === 'diagnostics'"
           key="diagnostics"
           class="diagnostics-panel-centered admin-workspace-panel"
           :class="{ 'diagnostics-has-results': !!(analysisResult && !isAnalyzing) }"
@@ -2576,7 +2437,7 @@ onUnmounted(() => {
 
           <!-- History list at the bottom (Visible only in diagnostics view if history has records) -->
           <div 
-            v-if="history.length > 0 && !isAdminUnauthorized" 
+            v-if="history.length > 0" 
             class="app-history-bottom-layout"
             style="margin-top: 1.5rem; max-width: none;"
           >

@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -20,11 +21,22 @@ using StackExchange.Redis;
 namespace Backend.Services
 {
     public record TokenExchangeRequest(string Code, string RedirectUri);
-    public record TokenRefreshRequest(string RefreshToken);
+    public record TokenRefreshRequest(string? RefreshToken);
     public record LogoutRequest(string? RefreshToken);
 
     public static class OidcAuthService
     {
+        private const string AccessTokenCookieName = "og_access_token";
+        private const string RefreshTokenCookieName = "og_refresh_token";
+        private static readonly TimeSpan RefreshLifetimeTtl = TimeSpan.FromDays(7);
+
+        private enum ValkeySessionCheck
+        {
+            Allowed,
+            Blacklisted,
+            StoreUnavailable
+        }
+
         public static IServiceCollection AddOidcAuthentication(this IServiceCollection services, IConfiguration configuration)
         {
             var authentikEnabled = configuration.GetValue<bool>("Authentik:Enabled", false);
@@ -95,7 +107,7 @@ namespace Backend.Services
                         OnMessageReceived = context =>
                         {
                             var authHeader = context.Request.Headers["Authorization"].ToString();
-                            if (string.IsNullOrEmpty(authHeader) && context.Request.Cookies.TryGetValue("admin_token", out var cookieToken))
+                            if (string.IsNullOrEmpty(authHeader) && context.Request.Cookies.TryGetValue(AccessTokenCookieName, out var cookieToken))
                             {
                                 context.Token = cookieToken;
                             }
@@ -108,7 +120,6 @@ namespace Backend.Services
                             {
                                 msg += " | " + context.Exception.InnerException.Message;
                             }
-                            context.Response.Headers["X-Auth-Error"] = msg;
                             Console.WriteLine($"[OIDC] Token validation failed: {msg}");
                             return Task.CompletedTask;
                         },
@@ -124,7 +135,7 @@ namespace Backend.Services
 
                             if (string.IsNullOrEmpty(rawToken))
                             {
-                                context.Request.Cookies.TryGetValue("admin_token", out rawToken);
+                                context.Request.Cookies.TryGetValue(AccessTokenCookieName, out rawToken);
                             }
 
                             if (string.IsNullOrEmpty(rawToken)) return;
@@ -141,31 +152,34 @@ namespace Backend.Services
                                 tokenKey = Convert.ToBase64String(hashBytes);
                             }
 
-                            // Check Redis/Valkey for blacklisted session/token
+                            // Check Redis/Valkey for blacklisted session/token (fail-closed if store is down)
                             var redis = context.HttpContext.RequestServices.GetService<IConnectionMultiplexer>();
-                            IDatabase? db = null;
-                            if (redis != null && redis.IsConnected)
+                            if (!IsValkeyAvailable(redis))
                             {
-                                db = redis.GetDatabase();
+                                Console.WriteLine("[OIDC] Token validation failed: Valkey is unavailable.");
+                                context.Fail("Session store is unavailable.");
+                                return;
+                            }
 
-                                if (await db.KeyExistsAsync($"blacklist:token:{tokenKey}"))
-                                {
-                                    Console.WriteLine($"[OIDC] Token validation failed: token {tokenKey} is blacklisted.");
-                                    context.Fail("Token is blacklisted.");
-                                    return;
-                                }
-                                if (!string.IsNullOrEmpty(sid) && await db.KeyExistsAsync($"blacklist:session:{sid}"))
-                                {
-                                    Console.WriteLine($"[OIDC] Token validation failed: session {sid} is blacklisted.");
-                                    context.Fail("Session is blacklisted.");
-                                    return;
-                                }
+                            var db = redis!.GetDatabase();
 
-                                // Check active cache
-                                if (await db.KeyExistsAsync($"active:token:{tokenKey}"))
-                                {
-                                    goto ProcessClaims;
-                                }
+                            if (await db.KeyExistsAsync($"blacklist:token:{tokenKey}"))
+                            {
+                                Console.WriteLine($"[OIDC] Token validation failed: token {tokenKey} is blacklisted.");
+                                context.Fail("Token is blacklisted.");
+                                return;
+                            }
+                            if (!string.IsNullOrEmpty(sid) && await db.KeyExistsAsync($"blacklist:session:{sid}"))
+                            {
+                                Console.WriteLine($"[OIDC] Token validation failed: session {sid} is blacklisted.");
+                                context.Fail("Session is blacklisted.");
+                                return;
+                            }
+
+                            // Check active cache
+                            if (await db.KeyExistsAsync($"active:token:{tokenKey}"))
+                            {
+                                goto ProcessClaims;
                             }
 
                             // Fallback check: call Authentik userinfo endpoint
@@ -188,17 +202,14 @@ namespace Backend.Services
                                         Console.WriteLine($"[OIDC] Token validation failed: Session is inactive or revoked in Authentik. Blacklisting token {tokenKey} for 10m.");
                                         context.Fail("Session is inactive or revoked.");
 
-                                        if (db != null)
-                                        {
-                                            await db.StringSetAsync($"blacklist:token:{tokenKey}", "true", TimeSpan.FromMinutes(10));
-                                        }
+                                        await db.StringSetAsync($"blacklist:token:{tokenKey}", "true", TimeSpan.FromMinutes(10));
                                         return;
                                     }
 
                                     Console.WriteLine(
                                         $"[OIDC] Userinfo returned {(int)response.StatusCode}; skipping online check, trusting JWT signature.");
                                 }
-                                else if (db != null)
+                                else
                                 {
                                     await db.StringSetAsync($"active:token:{tokenKey}", "true", TimeSpan.FromSeconds(30));
                                 }
@@ -250,6 +261,10 @@ namespace Backend.Services
 
             services.AddAuthorization(options =>
             {
+                options.FallbackPolicy = new AuthorizationPolicyBuilder(JwtBearerDefaults.AuthenticationScheme)
+                    .RequireAuthenticatedUser()
+                    .Build();
+
                 options.AddPolicy("AdminOnly", policy =>
                 {
                     policy.RequireAuthenticatedUser();
@@ -270,8 +285,10 @@ namespace Backend.Services
 
         public static IEndpointRouteBuilder MapOidcEndpoints(this IEndpointRouteBuilder endpoints, IConfiguration config)
         {
-            endpoints.MapPost("/api/auth/token", async (TokenExchangeRequest request, IHttpClientFactory httpClientFactory) =>
+            endpoints.MapPost("/api/auth/token", async (HttpContext context, TokenExchangeRequest request, IConnectionMultiplexer redis, IHttpClientFactory httpClientFactory) =>
             {
+                ClearAdminAuthCookies(context.Response);
+
                 var authority = config["Authentik:Authority"] ?? "http://localhost:9000/application/o/ophthalmoguide/";
                 var clientId = config["Authentik:ClientId"];
                 var clientSecret = config["Authentik:ClientSecret"];
@@ -308,15 +325,10 @@ namespace Backend.Services
                     using var jsonDoc = JsonDocument.Parse(responseContent);
                     
                     string? accessToken = null;
-                    string? idToken = null;
                     string? refreshToken = null;
                     if (jsonDoc.RootElement.TryGetProperty("access_token", out var accessTokenProp))
                     {
                         accessToken = accessTokenProp.GetString();
-                    }
-                    if (jsonDoc.RootElement.TryGetProperty("id_token", out var idTokenProp))
-                    {
-                        idToken = idTokenProp.GetString();
                     }
                     if (jsonDoc.RootElement.TryGetProperty("refresh_token", out var refreshTokenProp))
                     {
@@ -342,20 +354,49 @@ namespace Backend.Services
                             Console.WriteLine($"[OIDC] Error parsing claims on login: {ex.Message}");
                         }
 
-                        return Results.Ok(new { 
-                            access_token = accessToken, 
-                            id_token = idToken, 
-                            refresh_token = refreshToken 
-                        });
+                        var sessionCheck = await CheckSessionBlacklistAsync(redis, GetJwtClaim(accessToken, "sid"));
+                        if (sessionCheck == ValkeySessionCheck.StoreUnavailable)
+                        {
+                            Console.WriteLine("[OIDC] Token exchange rejected: Valkey is unavailable.");
+                            ClearAdminAuthCookies(context.Response);
+                            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+                        }
+                        if (sessionCheck == ValkeySessionCheck.Blacklisted)
+                        {
+                            var blockedSid = GetJwtClaim(accessToken, "sid");
+                            Console.WriteLine($"[OIDC] Token exchange rejected: session {blockedSid} is blacklisted.");
+                            if (!string.IsNullOrEmpty(refreshToken))
+                            {
+                                await RevokeTokenInAuthentik(refreshToken, "refresh_token", httpClientFactory, config);
+                            }
+                            ClearAdminAuthCookies(context.Response);
+                            return Results.Unauthorized();
+                        }
+
+                        if (!await TryStoreRefreshSessionMappingAsync(redis, refreshToken, accessToken))
+                        {
+                            Console.WriteLine("[OIDC] Token exchange rejected: failed to store refresh session mapping.");
+                            if (!string.IsNullOrEmpty(refreshToken))
+                            {
+                                await RevokeTokenInAuthentik(refreshToken, "refresh_token", httpClientFactory, config);
+                            }
+                            ClearAdminAuthCookies(context.Response);
+                            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+                        }
+
+                        SetAdminAuthCookies(context.Response, accessToken, refreshToken);
+                        return Results.Ok(new { success = true });
                     }
                 }
                 
                 Console.WriteLine($"[OIDC] Token exchange failed ({response.StatusCode}): {responseContent}");
+                ClearAdminAuthCookies(context.Response);
                 return Results.Problem($"Ошибка аутентификации. Проверьте Redirect URI в Authentik ({request.RedirectUri}).");
             })
+            .AllowAnonymous()
             .WithName("ExchangeToken");
 
-            endpoints.MapPost("/api/auth/refresh", async (TokenRefreshRequest request, IHttpClientFactory httpClientFactory) =>
+            endpoints.MapPost("/api/auth/refresh", async (HttpContext context, TokenRefreshRequest? request, IConnectionMultiplexer redis, IHttpClientFactory httpClientFactory) =>
             {
                 var authority = config["Authentik:Authority"] ?? "http://localhost:9000/application/o/ophthalmoguide/";
                 var clientId = config["Authentik:ClientId"];
@@ -365,10 +406,39 @@ namespace Backend.Services
                 var tokenEndpoint = $"{authorityBase}/application/o/token/";
                 
                 var client = httpClientFactory.CreateClient();
+                var refreshToken = request?.RefreshToken;
+                if (string.IsNullOrEmpty(refreshToken))
+                {
+                    context.Request.Cookies.TryGetValue(RefreshTokenCookieName, out refreshToken);
+                }
+
+                if (string.IsNullOrEmpty(refreshToken))
+                {
+                    ClearAdminAuthCookies(context.Response);
+                    return Results.Unauthorized();
+                }
+
+                context.Request.Cookies.TryGetValue(AccessTokenCookieName, out var existingAccessToken);
+                var preRefreshCheck = await CheckRefreshSessionAsync(redis, existingAccessToken, refreshToken);
+                if (preRefreshCheck == ValkeySessionCheck.StoreUnavailable)
+                {
+                    Console.WriteLine("[OIDC] Refresh rejected: Valkey is unavailable.");
+                    return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+                }
+                if (preRefreshCheck == ValkeySessionCheck.Blacklisted)
+                {
+                    var blockedSid = GetJwtClaim(existingAccessToken, "sid")
+                        ?? await GetRefreshMappedSidAsync(redis, refreshToken);
+                    await RejectBlacklistedRefreshAsync(
+                        context, redis, httpClientFactory, config, refreshToken,
+                        $"session {blockedSid} is blacklisted.");
+                    return Results.Unauthorized();
+                }
+
                 var values = new Dictionary<string, string>
                 {
                     { "grant_type", "refresh_token" },
-                    { "refresh_token", request.RefreshToken }
+                    { "refresh_token", refreshToken }
                 };
                 
                 if (!string.IsNullOrEmpty(clientSecret) && clientSecret != "change-me-to-your-authentik-client-secret")
@@ -392,19 +462,14 @@ namespace Backend.Services
                     using var jsonDoc = JsonDocument.Parse(responseContent);
                     
                     string? accessToken = null;
-                    string? idToken = null;
-                    string? refreshToken = null;
+                    string? rotatedRefreshToken = null;
                     if (jsonDoc.RootElement.TryGetProperty("access_token", out var accessTokenProp))
                     {
                         accessToken = accessTokenProp.GetString();
                     }
-                    if (jsonDoc.RootElement.TryGetProperty("id_token", out var idTokenProp))
-                    {
-                        idToken = idTokenProp.GetString();
-                    }
                     if (jsonDoc.RootElement.TryGetProperty("refresh_token", out var refreshTokenProp))
                     {
-                        refreshToken = refreshTokenProp.GetString();
+                        rotatedRefreshToken = refreshTokenProp.GetString();
                     }
 
                     if (!string.IsNullOrEmpty(accessToken))
@@ -426,21 +491,59 @@ namespace Backend.Services
                             Console.WriteLine($"[OIDC] Error parsing claims on refresh: {ex.Message}");
                         }
 
-                        return Results.Ok(new { 
-                            access_token = accessToken, 
-                            id_token = idToken, 
-                            refresh_token = refreshToken 
-                        });
+                        var effectiveRefreshToken = rotatedRefreshToken ?? refreshToken;
+                        var postRefreshCheck = await CheckRefreshSessionAsync(redis, accessToken, effectiveRefreshToken);
+                        if (postRefreshCheck == ValkeySessionCheck.StoreUnavailable)
+                        {
+                            Console.WriteLine("[OIDC] Refresh rejected after token exchange: Valkey is unavailable.");
+                            await RevokeTokenInAuthentik(effectiveRefreshToken, "refresh_token", httpClientFactory, config);
+                            ClearAdminAuthCookies(context.Response);
+                            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+                        }
+                        if (postRefreshCheck == ValkeySessionCheck.Blacklisted)
+                        {
+                            await RejectBlacklistedRefreshAsync(
+                                context, redis, httpClientFactory, config, effectiveRefreshToken,
+                                $"session {GetJwtClaim(accessToken, "sid")} is blacklisted after refresh.");
+                            return Results.Unauthorized();
+                        }
+
+                        if (!await IsAccessTokenActiveAtIdpAsync(accessToken, httpClientFactory, authority))
+                        {
+                            await RejectBlacklistedRefreshAsync(
+                                context, redis, httpClientFactory, config, effectiveRefreshToken,
+                                "session is inactive at IdP after refresh.");
+                            return Results.Unauthorized();
+                        }
+
+                        if (!await TryStoreRefreshSessionMappingAsync(redis, effectiveRefreshToken, accessToken))
+                        {
+                            Console.WriteLine("[OIDC] Refresh rejected: failed to store refresh session mapping.");
+                            await RevokeTokenInAuthentik(effectiveRefreshToken, "refresh_token", httpClientFactory, config);
+                            ClearAdminAuthCookies(context.Response);
+                            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+                        }
+
+                        SetAdminAuthCookies(context.Response, accessToken, effectiveRefreshToken);
+                        return Results.Ok(new { success = true });
                     }
                 }
                 
                 Console.WriteLine($"[OIDC] Token refresh failed ({response.StatusCode}): {responseContent}");
-                return Results.Problem("Не удалось обновить токен сессии.");
+                ClearAdminAuthCookies(context.Response);
+                return Results.Unauthorized();
             })
+            .AllowAnonymous()
             .WithName("RefreshToken");
 
             endpoints.MapPost("/api/auth/logout", async (HttpContext context, LogoutRequest request, IConnectionMultiplexer redis, IHttpClientFactory httpClientFactory) =>
             {
+                if (!IsValkeyAvailable(redis))
+                {
+                    Console.WriteLine("[OIDC] Logout failed: Valkey is unavailable.");
+                    return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+                }
+
                 var authHeader = context.Request.Headers["Authorization"].ToString();
                 var rawToken = authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
                     ? authHeader.Substring(7)
@@ -448,7 +551,7 @@ namespace Backend.Services
 
                 if (string.IsNullOrEmpty(rawToken))
                 {
-                    context.Request.Cookies.TryGetValue("admin_token", out rawToken);
+                    context.Request.Cookies.TryGetValue(AccessTokenCookieName, out rawToken);
                 }
 
                 if (!string.IsNullOrEmpty(rawToken))
@@ -499,25 +602,30 @@ namespace Backend.Services
                 var refreshToken = request?.RefreshToken;
                 if (string.IsNullOrEmpty(refreshToken))
                 {
-                    context.Request.Cookies.TryGetValue("admin_refresh_token", out refreshToken);
+                    context.Request.Cookies.TryGetValue(RefreshTokenCookieName, out refreshToken);
                 }
 
                 if (!string.IsNullOrEmpty(refreshToken))
                 {
-                    // Revoke Refresh Token in Authentik
+                    await ClearRefreshSessionMappingAsync(redis, refreshToken);
                     await RevokeTokenInAuthentik(refreshToken, "refresh_token", httpClientFactory, config);
                 }
 
-                // Delete cookies on backend response
-                context.Response.Cookies.Delete("admin_token", new CookieOptions { Path = "/", Secure = true, SameSite = SameSiteMode.Lax });
-                context.Response.Cookies.Delete("admin_refresh_token", new CookieOptions { Path = "/", Secure = true, SameSite = SameSiteMode.Lax });
+                ClearAdminAuthCookies(context.Response);
 
                 return Results.Ok(new { message = "Session invalidated successfully." });
             })
+            .AllowAnonymous()
             .WithName("LogoutToken");
 
             endpoints.MapPost("/api/auth/backchannel-logout", async (HttpContext context, IConfiguration config, IConnectionMultiplexer redis, IConfigurationManager<OpenIdConnectConfiguration> configManager) =>
             {
+                if (!IsValkeyAvailable(redis))
+                {
+                    Console.WriteLine("[OIDC] Backchannel Logout failed: Valkey is unavailable.");
+                    return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+                }
+
                 try
                 {
                     var form = await context.Request.ReadFormAsync();
@@ -570,17 +678,11 @@ namespace Backend.Services
                     var sid = principal.FindFirst("sid")?.Value;
 
                     var db = redis.GetDatabase();
-                    var exp = jwtToken.ValidTo;
-                    var ttl = exp - DateTime.UtcNow;
-                    if (ttl.TotalSeconds <= 0)
-                    {
-                        ttl = TimeSpan.FromMinutes(10);
-                    }
 
                     if (!string.IsNullOrEmpty(sid))
                     {
-                        await db.StringSetAsync($"blacklist:session:{sid}", "true", ttl);
-                        Console.WriteLine($"[OIDC] Backchannel Logout: Session {sid} blacklisted for {ttl.TotalSeconds}s.");
+                        await db.StringSetAsync($"blacklist:session:{sid}", "true", RefreshLifetimeTtl);
+                        Console.WriteLine($"[OIDC] Backchannel Logout: Session {sid} blacklisted for {RefreshLifetimeTtl.TotalDays}d.");
                     }
 
                     return Results.Ok();
@@ -591,9 +693,239 @@ namespace Backend.Services
                     return Results.BadRequest("Failed to process backchannel logout.");
                 }
             })
+            .AllowAnonymous()
             .WithName("BackchannelLogout");
 
             return endpoints;
+        }
+
+        private static void SetAdminAuthCookies(HttpResponse response, string accessToken, string? refreshToken)
+        {
+            var accessMaxAge = GetJwtRemainingSeconds(accessToken);
+            if (accessMaxAge > 0)
+            {
+                response.Cookies.Append(AccessTokenCookieName, accessToken, CreateAdminAccessCookieOptions(accessMaxAge));
+            }
+
+            if (!string.IsNullOrEmpty(refreshToken))
+            {
+                response.Cookies.Append(RefreshTokenCookieName, refreshToken, CreateAdminRefreshCookieOptions());
+            }
+        }
+
+        private static void ClearAdminAuthCookies(HttpResponse response)
+        {
+            response.Cookies.Delete(AccessTokenCookieName, CreateAdminAccessCookieOptions(0));
+            response.Cookies.Delete(RefreshTokenCookieName, CreateAdminRefreshCookieOptions(expire: true));
+        }
+
+        private static CookieOptions CreateAdminAccessCookieOptions(int maxAgeSeconds)
+        {
+            return new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true,
+                SameSite = SameSiteMode.Lax,
+                Path = "/",
+                MaxAge = maxAgeSeconds > 0 ? TimeSpan.FromSeconds(maxAgeSeconds) : TimeSpan.Zero
+            };
+        }
+
+        private static CookieOptions CreateAdminRefreshCookieOptions(bool expire = false)
+        {
+            return new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true,
+                SameSite = SameSiteMode.Strict,
+                Path = "/",
+                MaxAge = expire ? TimeSpan.Zero : null
+            };
+        }
+
+        private static int GetJwtRemainingSeconds(string accessToken)
+        {
+            try
+            {
+                var handler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
+                if (!handler.CanReadToken(accessToken))
+                {
+                    return 3600;
+                }
+
+                var jwt = handler.ReadJwtToken(accessToken);
+                var remaining = (int)Math.Floor((jwt.ValidTo - DateTime.UtcNow).TotalSeconds);
+                return remaining > 0 ? remaining : 0;
+            }
+            catch
+            {
+                return 3600;
+            }
+        }
+
+        private static string? GetJwtClaim(string? token, string claimType)
+        {
+            if (string.IsNullOrEmpty(token))
+            {
+                return null;
+            }
+
+            try
+            {
+                var handler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
+                if (!handler.CanReadToken(token))
+                {
+                    return null;
+                }
+
+                return handler.ReadJwtToken(token).Claims
+                    .FirstOrDefault(c => c.Type == claimType)?.Value;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool IsValkeyAvailable(IConnectionMultiplexer? redis)
+            => redis is not null && redis.IsConnected;
+
+        private static async Task<ValkeySessionCheck> CheckSessionBlacklistAsync(IConnectionMultiplexer? redis, string? sid)
+        {
+            if (!IsValkeyAvailable(redis))
+            {
+                return ValkeySessionCheck.StoreUnavailable;
+            }
+
+            if (string.IsNullOrEmpty(sid))
+            {
+                return ValkeySessionCheck.Allowed;
+            }
+
+            var blacklisted = await redis!.GetDatabase().KeyExistsAsync($"blacklist:session:{sid}");
+            return blacklisted ? ValkeySessionCheck.Blacklisted : ValkeySessionCheck.Allowed;
+        }
+
+        private static async Task<ValkeySessionCheck> CheckRefreshSessionAsync(
+            IConnectionMultiplexer? redis,
+            string? accessToken,
+            string? refreshToken)
+        {
+            if (!IsValkeyAvailable(redis))
+            {
+                return ValkeySessionCheck.StoreUnavailable;
+            }
+
+            var accessCheck = await CheckSessionBlacklistAsync(redis, GetJwtClaim(accessToken, "sid"));
+            if (accessCheck != ValkeySessionCheck.Allowed)
+            {
+                return accessCheck;
+            }
+
+            if (string.IsNullOrEmpty(refreshToken))
+            {
+                return ValkeySessionCheck.Allowed;
+            }
+
+            var mappedSid = await GetRefreshMappedSidAsync(redis, refreshToken);
+            return await CheckSessionBlacklistAsync(redis, mappedSid);
+        }
+
+        private static string GetTokenFingerprint(string token)
+        {
+            using var sha256 = System.Security.Cryptography.SHA256.Create();
+            var hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(token));
+            return Convert.ToBase64String(hashBytes);
+        }
+
+        private static async Task<string?> GetRefreshMappedSidAsync(IConnectionMultiplexer? redis, string? refreshToken)
+        {
+            if (redis == null || !redis.IsConnected || string.IsNullOrEmpty(refreshToken))
+            {
+                return null;
+            }
+
+            var mappedSid = await redis.GetDatabase().StringGetAsync($"refresh_sid:{GetTokenFingerprint(refreshToken)}");
+            return mappedSid.IsNullOrEmpty ? null : mappedSid.ToString();
+        }
+
+        private static async Task<bool> TryStoreRefreshSessionMappingAsync(
+            IConnectionMultiplexer? redis,
+            string? refreshToken,
+            string? accessToken)
+        {
+            if (!IsValkeyAvailable(redis) || string.IsNullOrEmpty(refreshToken))
+            {
+                return false;
+            }
+
+            var sid = GetJwtClaim(accessToken, "sid");
+            if (string.IsNullOrEmpty(sid))
+            {
+                return false;
+            }
+
+            var fp = GetTokenFingerprint(refreshToken);
+            await redis!.GetDatabase().StringSetAsync($"refresh_sid:{fp}", sid, RefreshLifetimeTtl);
+            return true;
+        }
+
+        private static async Task ClearRefreshSessionMappingAsync(IConnectionMultiplexer? redis, string? refreshToken)
+        {
+            if (!IsValkeyAvailable(redis) || string.IsNullOrEmpty(refreshToken))
+            {
+                return;
+            }
+
+            var fp = GetTokenFingerprint(refreshToken);
+            await redis.GetDatabase().KeyDeleteAsync($"refresh_sid:{fp}");
+        }
+
+        private static async Task<bool> IsAccessTokenActiveAtIdpAsync(
+            string accessToken,
+            IHttpClientFactory httpClientFactory,
+            string authority)
+        {
+            var authorityBase = authority.Split("/application/o/")[0];
+            var userinfoEndpoint = $"{authorityBase}/application/o/userinfo/";
+
+            try
+            {
+                using var client = httpClientFactory.CreateClient();
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                var response = await client.GetAsync(userinfoEndpoint);
+
+                if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
+                    response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                {
+                    return false;
+                }
+
+                return response.IsSuccessStatusCode;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[OIDC] Userinfo check on refresh failed: {ex.Message}");
+                return true;
+            }
+        }
+
+        private static async Task RejectBlacklistedRefreshAsync(
+            HttpContext context,
+            IConnectionMultiplexer? redis,
+            IHttpClientFactory httpClientFactory,
+            IConfiguration config,
+            string? refreshToken,
+            string reason)
+        {
+            Console.WriteLine($"[OIDC] Refresh rejected: {reason}");
+            if (!string.IsNullOrEmpty(refreshToken))
+            {
+                await ClearRefreshSessionMappingAsync(redis, refreshToken);
+                await RevokeTokenInAuthentik(refreshToken, "refresh_token", httpClientFactory, config);
+            }
+
+            ClearAdminAuthCookies(context.Response);
         }
 
         private static async Task RevokeTokenInAuthentik(string token, string tokenTypeHint, IHttpClientFactory httpClientFactory, IConfiguration config)

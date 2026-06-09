@@ -190,7 +190,6 @@ static bool TryBuildCertificateChain(
     {
         chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
         chain.ChainPolicy.CustomTrustStore.AddRange(extraRoots);
-        // Сервер smartspeech.sber.ru может не прислать промежуточный Sub CA — подставляем сами
         chain.ChainPolicy.ExtraStore.AddRange(extraRoots);
     }
 
@@ -247,12 +246,27 @@ var app = builder.Build();
 app.UseForwardedHeaders();
 var failOnStartupErrors = app.Configuration.GetValue("Startup:FailOnErrors", !app.Environment.IsDevelopment());
 var requireSeedData = app.Configuration.GetValue("Startup:RequireSeedData", !app.Environment.IsDevelopment());
+var valkeyWaitSeconds = app.Configuration.GetValue("Startup:ValkeyWaitSeconds", 60);
 
 // Seed Valkey and Ensure Postgres schema at startup
 using (var scope = app.Services.CreateScope())
 {
     var services = scope.ServiceProvider;
     var logger = services.GetRequiredService<ILogger<Program>>();
+
+    try
+    {
+        var redis = services.GetRequiredService<IConnectionMultiplexer>();
+        EnsureValkeyReadyAsync(redis, logger, TimeSpan.FromSeconds(valkeyWaitSeconds)).GetAwaiter().GetResult();
+    }
+    catch (System.Exception ex)
+    {
+        logger.LogCritical(ex, "Valkey is not available.");
+        if (failOnStartupErrors)
+        {
+            throw;
+        }
+    }
     
     // Ensure Postgres schema is created once at startup
     try
@@ -368,7 +382,7 @@ using (var scope = app.Services.CreateScope())
 // Configure the HTTP request pipeline.
 UseNoCacheForApiDocumentation(app);
 
-app.MapOpenApi();
+app.MapOpenApi().AllowAnonymous();
 app.UseSwaggerUI(options =>
 {
     options.SwaggerEndpoint("/openapi/v1.json", "OphthalmoGuide API");
@@ -504,6 +518,7 @@ app.MapPost("/api/analyze", async (HttpContext context, AnalyzeRequest request, 
         return Results.Problem("Не удалось выполнить анализ. Попробуйте позже.");
     }
 })
+.AllowAnonymous()
 .WithName("AnalyzeComplaint");
 
 
@@ -587,6 +602,7 @@ app.MapGet("/api/history", async (HttpContext context, OphthalmologyService serv
         return Results.Problem("Не удалось загрузить историю сессий.");
     }
 })
+.AllowAnonymous()
 .WithName("GetSessionHistory");
 
 
@@ -671,6 +687,7 @@ app.MapPost("/api/speech/recognize", async (HttpContext context, SaluteSpeechSer
         return Results.Problem("Не удалось распознать речь.");
     }
 })
+.AllowAnonymous()
 .WithName("RecognizeSpeech");
 
 // Подготовка аудио под требования SaluteSpeech API
@@ -799,6 +816,7 @@ app.MapPost("/api/speech/synthesize", async (HttpContext context, ILogger<Progra
         return Results.Problem("Не удалось синтезировать речь.");
     }
 })
+.AllowAnonymous()
 .WithName("SynthesizeSpeech");
 
 app.Run();
@@ -852,9 +870,37 @@ static void UseNoCacheForApiDocumentation(WebApplication app)
     });
 }
 
-// Минимальный загрузчик .env: KEY=VALUE по строкам, '#' — комментарий.
-// Уже заданные переменные окружения (например, из docker-compose) не перезаписываются.
-// Ключи в формате ASP.NET (Section__Key) автоматически попадают в IConfiguration.
+static async Task EnsureValkeyReadyAsync(
+    IConnectionMultiplexer redis,
+    ILogger logger,
+    TimeSpan timeout)
+{
+    var deadline = DateTime.UtcNow + timeout;
+
+    while (DateTime.UtcNow < deadline)
+    {
+        try
+        {
+            if (!redis.IsConnected)
+            {
+                await Task.Delay(500);
+                continue;
+            }
+
+            var latency = await redis.GetDatabase().PingAsync();
+            logger.LogInformation("Valkey is ready (ping {LatencyMs:F1} ms).", latency.TotalMilliseconds);
+            return;
+        }
+        catch (System.Exception ex)
+        {
+            logger.LogDebug("Valkey not ready yet: {Message}", ex.Message);
+            await Task.Delay(500);
+        }
+    }
+
+    throw new InvalidOperationException($"Valkey is not available after {timeout.TotalSeconds:F0}s.");
+}
+
 static void LoadDotEnv(string path)
 {
     if (!File.Exists(path)) return;
@@ -870,7 +916,6 @@ static void LoadDotEnv(string path)
         var key = line[..separatorIndex].Trim();
         var value = line[(separatorIndex + 1)..].Trim();
 
-        // Снимаем обрамляющие кавычки, если они есть.
         if (value.Length >= 2 &&
             ((value[0] == '"' && value[^1] == '"') || (value[0] == '\'' && value[^1] == '\'')))
         {
