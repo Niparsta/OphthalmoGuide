@@ -48,6 +48,7 @@
 
 ### 5. Мониторинг
 * **Prometheus** – сбор и хранение метрик со всех ключевых компонентов системы;
+* **Node Exporter** – экспорт метрик хоста (CPU, память, диск, сеть) для Prometheus;
 * **cAdvisor** – сбор метрик ресурсов контейнеров;
 * **redis-exporter** – экспорт метрик хранилища Valkey для Prometheus;
 * **postgres-exporter** – экспорт метрик PostgreSQL для Prometheus;
