@@ -12,8 +12,10 @@ namespace Backend.Services
     public class PdfExportService
     {
         private const string BrandFontFamily = "Plus Jakarta Sans";
+        private const string BrandTitleFallbackFont = "Arial";
         private static readonly object BrandFontLock = new();
         private static volatile bool _brandFontRegistered;
+        private static volatile bool _brandFontAvailable;
 
         static PdfExportService()
         {
@@ -50,7 +52,8 @@ namespace Backend.Services
                             row.RelativeItem().Column(column =>
                             {
                                 column.Item().Text("OphthalmoGuide")
-                                    .FontFamily(BrandFontFamily)
+                                    .FontFamily(GetBrandTitleFont())
+                                    .SemiBold()
                                     .FontSize(24)
                                     .FontColor("#0F172A");
 
@@ -169,7 +172,7 @@ namespace Backend.Services
                                     var badgeColor = GetThreatLevelColor(match.ThreatLevel);
                                     table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten2).Padding(5).Text(levelText).Bold().FontColor(badgeColor);
 
-                                    table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten2).Padding(5).Text(string.Join(", ", match.MatchedSymptoms)).FontSize(8).FontColor(Colors.Grey.Darken2);
+                                    table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten2).Padding(5).Text(string.Join(", ", match.MatchedSymptoms ?? [])).FontSize(8).FontColor(Colors.Grey.Darken2);
                                 }
                             });
 
@@ -250,6 +253,11 @@ namespace Backend.Services
             return DateTime.Now;
         }
 
+        private static string GetBrandTitleFont()
+        {
+            return _brandFontAvailable ? BrandFontFamily : BrandTitleFallbackFont;
+        }
+
         private static void EnsureBrandFontRegistered()
         {
             if (_brandFontRegistered)
@@ -264,16 +272,33 @@ namespace Backend.Services
                     return;
                 }
 
-                var fontPath = Path.Combine(
-                    AppContext.BaseDirectory,
-                    "Assets",
-                    "Fonts",
-                    "plus-jakarta-sans-latin-800-normal.woff");
-
-                if (File.Exists(fontPath))
+                var fontsDir = Path.Combine(AppContext.BaseDirectory, "Assets", "Fonts");
+                var fontCandidates = new[]
                 {
-                    using var stream = File.OpenRead(fontPath);
-                    FontManager.RegisterFontWithCustomName(BrandFontFamily, stream);
+                    "plus-jakarta-sans-latin-800-normal.ttf",
+                    "plus-jakarta-sans-latin-800-normal.woff",
+                    "plus-jakarta-sans-latin-800-normal.woff2",
+                };
+
+                foreach (var fileName in fontCandidates)
+                {
+                    var fontPath = Path.Combine(fontsDir, fileName);
+                    if (!File.Exists(fontPath))
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        using var stream = File.OpenRead(fontPath);
+                        FontManager.RegisterFontWithCustomName(BrandFontFamily, stream);
+                        _brandFontAvailable = true;
+                        break;
+                    }
+                    catch (Exception)
+                    {
+                        // Try next format; PDF generation must not depend on a single font file.
+                    }
                 }
 
                 _brandFontRegistered = true;
