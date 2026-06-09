@@ -572,6 +572,7 @@ app.MapGet("/api/report/pdf", async (HttpContext context, string? id, AppDbConte
         }
 
         var pdfBytes = pdfService.GenerateReportPdf(
+            entity.Id,
             entity.ComplaintText,
             entity.DetectedSymptoms,
             entity.AssumedSymptoms,

@@ -155,6 +155,8 @@ services:
         condition: service_healthy
       valkey:
         condition: service_healthy
+      authentik-worker:
+        condition: service_started
     restart: unless-stopped
 
   authentik-worker:
@@ -175,7 +177,6 @@ services:
     depends_on:
       - postgres
       - valkey
-      - authentik-server
     restart: unless-stopped
 
   prometheus:

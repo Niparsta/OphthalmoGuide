@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using Backend.Models;
-using QuestPDF.Drawing;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
@@ -11,20 +10,14 @@ namespace Backend.Services
 {
     public class PdfExportService
     {
-        private const string BrandFontFamily = "Plus Jakarta Sans";
-        private const string BrandTitleFallbackFont = "Arial";
-        private static readonly object BrandFontLock = new();
-        private static volatile bool _brandFontRegistered;
-        private static volatile bool _brandFontAvailable;
+        private const float BrandLogoHeight = 46;
+        private const float SectionTitleWithContentMinHeight = 56f;
+        private const float SectionTableMinHeight = 100f;
+        private static readonly string LogoPath = Path.Combine(AppContext.BaseDirectory, "Assets", "Images", "logo_black.png");
 
         static PdfExportService()
         {
             QuestPDF.Settings.License = LicenseType.Community;
-        }
-
-        public PdfExportService()
-        {
-            EnsureBrandFontRegistered();
         }
 
         public static string GetFileName(DateTime reportTime)
@@ -32,7 +25,7 @@ namespace Backend.Services
             return $"OphthalmoGuide_{reportTime:yyyyMMdd_HHmmss}.pdf";
         }
 
-        public byte[] GenerateReportPdf(string complaintText, List<string> detectedSymptoms, List<string> assumedSymptoms, List<DiseaseMatch> results)
+        public byte[] GenerateReportPdf(string recordId, string complaintText, List<string> detectedSymptoms, List<string> assumedSymptoms, List<DiseaseMatch> results)
         {
             var reportTime = GetReportTime();
 
@@ -47,67 +40,72 @@ namespace Backend.Services
 
                     // Header
                     page.Header()
-                        .Row(row =>
+                        .Column(headerColumn =>
                         {
-                            row.RelativeItem().Column(column =>
+                            headerColumn.Item().Row(row =>
                             {
-                                column.Item().Text("OphthalmoGuide")
-                                    .FontFamily(GetBrandTitleFont())
-                                    .SemiBold()
-                                    .FontSize(24)
-                                    .FontColor("#0F172A");
+                                row.RelativeItem().Column(column =>
+                                {
+                                    column.Item()
+                                        .Height(BrandLogoHeight)
+                                        .Image(LogoPath)
+                                        .FitHeight();
 
-                                column.Item().PaddingTop(4).Text("Информационно-справочная система предварительной диагностики офтальмологических заболеваний")
-                                    .FontSize(9)
-                                    .FontColor("#64748B");
+                                    column.Item().PaddingTop(4).Text("Информационно-справочная система предварительной диагностики офтальмологических заболеваний")
+                                        .FontSize(9)
+                                        .FontColor("#64748B");
+                                });
+
+                                row.ConstantItem(140).AlignRight().AlignMiddle().Column(column =>
+                                {
+                                    column.Item().Text($"Дата: {reportTime:dd.MM.yyyy}")
+                                        .FontSize(9)
+                                        .FontColor(Colors.Grey.Darken2);
+                                    column.Item().Text($"Время: {reportTime:HH:mm:ss} мск")
+                                        .FontSize(9)
+                                        .FontColor(Colors.Grey.Darken2);
+                                });
                             });
 
-                            row.ConstantItem(140).AlignRight().AlignMiddle().Column(column =>
-                            {
-                                column.Item().Text($"Дата: {reportTime:dd.MM.yyyy}")
-                                    .FontSize(9)
-                                    .FontColor(Colors.Grey.Darken2);
-                                column.Item().Text($"Время: {reportTime:HH:mm:ss} мск")
-                                    .FontSize(9)
-                                    .FontColor(Colors.Grey.Darken2);
-                            });
+                            headerColumn.Item().PaddingTop(0.2f, Unit.Centimetre).LineHorizontal(1).LineColor(Colors.Grey.Lighten2);
                         });
 
                     // Content
                     page.Content()
-                        .PaddingTop(0.2f, Unit.Centimetre)
                         .PaddingBottom(1, Unit.Centimetre)
                         .Column(column =>
                         {
-                            // Line separator
-                            column.Item().LineHorizontal(1).LineColor(Colors.Grey.Lighten2);
                             column.Item().PaddingBottom(15);
 
                             // Section 1
-                            column.Item().Text("1. Анамнез (жалоба пациента)").FontSize(14).Bold().FontColor("#0284c7");
-                            column.Item().PaddingTop(5).PaddingBottom(15).Background(Colors.Grey.Lighten4).Padding(10).Text(complaintText).Italic();
+                            RenderReportSection(column, "1. Анамнез (жалоба пациента)", SectionTitleWithContentMinHeight, section =>
+                            {
+                                section.Item().PaddingTop(5).PaddingBottom(15).Background(Colors.Grey.Lighten4).Padding(10).Text(complaintText).Italic();
+                            });
 
                             // Section 2
-                            column.Item().Text("2. Выявленные симптомы").FontSize(14).Bold().FontColor("#0284c7");
-                            column.Item().PaddingTop(5).PaddingBottom(15).Row(row =>
+                            RenderReportSection(column, "2. Выявленные симптомы", SectionTitleWithContentMinHeight, section =>
                             {
-                                row.RelativeItem().Column(symptomCol =>
+                                section.Item().PaddingTop(5).PaddingBottom(15).Row(row =>
                                 {
-                                    symptomCol.Item().Text("Выделенные клинические симптомы:").Bold().FontSize(10).FontColor(Colors.Grey.Darken3);
-                                    if (detectedSymptoms == null || detectedSymptoms.Count == 0)
+                                    row.RelativeItem().Column(symptomCol =>
                                     {
-                                        symptomCol.Item().PaddingLeft(10).Text("Симптомы не обнаружены.").Italic().FontColor(Colors.Grey.Medium);
-                                    }
-                                    else
-                                    {
-                                        symptomCol.Item().PaddingLeft(10).Text(string.Join(", ", detectedSymptoms)).Bold().FontColor(Colors.Green.Darken3);
-                                    }
+                                        symptomCol.Item().Text("Выделенные клинические симптомы:").Bold().FontSize(10).FontColor(Colors.Grey.Darken3);
+                                        if (detectedSymptoms == null || detectedSymptoms.Count == 0)
+                                        {
+                                            symptomCol.Item().PaddingLeft(10).Text("Симптомы не обнаружены.").Italic().FontColor(Colors.Grey.Medium);
+                                        }
+                                        else
+                                        {
+                                            symptomCol.Item().PaddingLeft(10).Text(string.Join(", ", detectedSymptoms)).Bold().FontColor(Colors.Green.Darken3);
+                                        }
 
-                                    if (assumedSymptoms != null && assumedSymptoms.Count > 0)
-                                    {
-                                        symptomCol.Item().PaddingTop(8).Text("Косвенные клинические симптомы:").Bold().FontSize(10).FontColor(Colors.Grey.Darken3);
-                                        symptomCol.Item().PaddingLeft(10).Text(string.Join(", ", assumedSymptoms)).Bold().FontColor(Colors.Blue.Darken3);
-                                    }
+                                        if (assumedSymptoms != null && assumedSymptoms.Count > 0)
+                                        {
+                                            symptomCol.Item().PaddingTop(8).Text("Косвенные клинические симптомы:").Bold().FontSize(10).FontColor(Colors.Grey.Darken3);
+                                            symptomCol.Item().PaddingLeft(10).Text(string.Join(", ", assumedSymptoms)).Bold().FontColor(Colors.Blue.Darken3);
+                                        }
+                                    });
                                 });
                             });
 
@@ -127,81 +125,85 @@ namespace Backend.Services
                             }
 
                             // Section 3
-                            column.Item().Text("3. Предполагаемые причины").FontSize(14).Bold().FontColor("#0284c7");
-                            column.Item().PaddingTop(5).Table(table =>
+                            RenderReportSection(column, "3. Предполагаемые причины", SectionTableMinHeight, section =>
                             {
-                                // Columns definition
-                                table.ColumnsDefinition(columns =>
+                                section.Item().PaddingTop(5).Table(table =>
                                 {
-                                    columns.RelativeColumn(3.0f); // Заболевание
-                                    columns.RelativeColumn(2.0f); // Диффер. вес
-                                    columns.RelativeColumn(2.6f); // Совпадение по симптомам
-                                    columns.RelativeColumn(2.2f); // Уровень угрозы
-                                    columns.RelativeColumn(3.2f); // Совпавшие симптомы
+                                    // Columns definition
+                                    table.ColumnsDefinition(columns =>
+                                    {
+                                        columns.RelativeColumn(3.0f); // Заболевание
+                                        columns.RelativeColumn(2.0f); // Диффер. вес
+                                        columns.RelativeColumn(2.6f); // Совпадение по симптомам
+                                        columns.RelativeColumn(2.2f); // Уровень угрозы
+                                        columns.RelativeColumn(3.2f); // Совпавшие симптомы
+                                    });
+
+                                    // Header
+                                    table.Header(header =>
+                                    {
+                                        header.Cell().Background("#e0f2fe").Padding(5).Text("Заболевание").Bold().FontColor("#0369a1");
+                                        header.Cell().Background("#e0f2fe").Padding(5).Text("Диффер. вес").Bold().FontColor("#0369a1");
+                                        header.Cell().Background("#e0f2fe").Padding(5).Text("Совпадение по симптомам").Bold().FontColor("#0369a1");
+                                        header.Cell().Background("#e0f2fe").Padding(5).Text("Уровень угрозы").Bold().FontColor("#0369a1");
+                                        header.Cell().Background("#e0f2fe").Padding(5).Text("Совпавшие симптомы").Bold().FontColor("#0369a1");
+                                    });
+
+                                    // Rows
+                                    for (int i = 0; i < filteredResults.Count; i++)
+                                    {
+                                        var match = filteredResults[i];
+
+                                        table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten2).Padding(5).Text(match.Disease);
+
+                                        // Differential weight normalized to 0.00 - 1.00
+                                        double confidenceRatio = topPercent > 0 ? (match.MatchPercentage / topPercent) : 0;
+                                        string diffWeightStr = confidenceRatio.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+                                        table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten2).Padding(5).Text(diffWeightStr).FontColor(Colors.Grey.Darken3);
+
+                                        // Absolute match percentage and symptom counts
+                                        table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten2).Padding(5)
+                                            .Text($"{match.MatchPercentage}% ({match.MatchingSymptomsCount} из {match.TotalDiseaseSymptomsCount})")
+                                            .FontColor(Colors.Grey.Darken3);
+
+                                        // Threat Level Badge
+                                        var levelText = GetThreatLevelText(match.ThreatLevel);
+                                        var badgeColor = GetThreatLevelColor(match.ThreatLevel);
+                                        table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten2).Padding(5).Text(levelText).Bold().FontColor(badgeColor);
+
+                                        table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten2).Padding(5).Text(string.Join(", ", match.MatchedSymptoms ?? [])).FontSize(8).FontColor(Colors.Grey.Darken2);
+                                    }
                                 });
-
-                                // Header
-                                table.Header(header =>
-                                {
-                                    header.Cell().Background("#e0f2fe").Padding(5).Text("Заболевание").Bold().FontColor("#0369a1");
-                                    header.Cell().Background("#e0f2fe").Padding(5).Text("Диффер. вес").Bold().FontColor("#0369a1");
-                                    header.Cell().Background("#e0f2fe").Padding(5).Text("Совпадение по симптомам").Bold().FontColor("#0369a1");
-                                    header.Cell().Background("#e0f2fe").Padding(5).Text("Уровень угрозы").Bold().FontColor("#0369a1");
-                                    header.Cell().Background("#e0f2fe").Padding(5).Text("Совпавшие симптомы").Bold().FontColor("#0369a1");
-                                });
-
-                                // Rows
-                                for (int i = 0; i < filteredResults.Count; i++)
-                                {
-                                    var match = filteredResults[i];
-
-                                    table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten2).Padding(5).Text(match.Disease);
-
-                                    // Differential weight normalized to 0.00 - 1.00
-                                    double confidenceRatio = topPercent > 0 ? (match.MatchPercentage / topPercent) : 0;
-                                    string diffWeightStr = confidenceRatio.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
-                                    table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten2).Padding(5).Text(diffWeightStr).FontColor(Colors.Grey.Darken3);
-
-                                    // Absolute match percentage and symptom counts
-                                    table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten2).Padding(5)
-                                        .Text($"{match.MatchPercentage}% ({match.MatchingSymptomsCount} из {match.TotalDiseaseSymptomsCount})")
-                                        .FontColor(Colors.Grey.Darken3);
-
-                                    // Threat Level Badge
-                                    var levelText = GetThreatLevelText(match.ThreatLevel);
-                                    var badgeColor = GetThreatLevelColor(match.ThreatLevel);
-                                    table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten2).Padding(5).Text(levelText).Bold().FontColor(badgeColor);
-
-                                    table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten2).Padding(5).Text(string.Join(", ", match.MatchedSymptoms ?? [])).FontSize(8).FontColor(Colors.Grey.Darken2);
-                                }
                             });
 
                             // Section 4
                             var maxThreatLevel = filteredResults.Count > 0 ? filteredResults.Max(r => r.ThreatLevel) : 0;
-                            column.Item().PaddingTop(15).Text("4. Рекомендации").FontSize(14).Bold().FontColor("#0284c7");
-                            column.Item().PaddingTop(5).Text(x =>
+                            RenderReportSectionEntire(column, "4. Рекомендации", section =>
                             {
-                                x.Span("Общий уровень угрозы: ").Bold();
-                                x.Span(GetThreatLevelText(maxThreatLevel)).Bold().FontColor(GetThreatLevelColor(maxThreatLevel));
-                            });
-                            column.Item().PaddingTop(5).Background(Colors.Grey.Lighten4).Padding(10).Column(adviceCol =>
-                            {
-                                adviceCol.Item().Text(GetThreatLevelAdvice(maxThreatLevel)).Italic();
-
-                                if (maxThreatLevel == 3)
+                                section.Item().PaddingTop(5).Text(x =>
                                 {
-                                    adviceCol.Item().PaddingTop(6).Text(text =>
+                                    x.Span("Общий уровень угрозы: ").Bold();
+                                    x.Span(GetThreatLevelText(maxThreatLevel)).Bold().FontColor(GetThreatLevelColor(maxThreatLevel));
+                                });
+                                section.Item().PaddingTop(5).Background(Colors.Grey.Lighten4).Padding(10).Column(adviceCol =>
+                                {
+                                    adviceCol.Item().Text(GetThreatLevelAdvice(maxThreatLevel)).Italic();
+
+                                    if (maxThreatLevel == 3)
                                     {
-                                        text.Span("112").Bold().FontColor(Colors.Red.Darken2);
-                                        text.Span(" – единый номер вызова экстренных оперативных служб").FontSize(8.5f);
-                                    });
-                                    adviceCol.Item().PaddingTop(3).Text(text =>
-                                    {
-                                        text.Span("103").Bold().FontColor(Colors.Red.Darken2);
-                                        text.Span(" – общефедеральный номер вызова скорой медицинской помощи").FontSize(8.5f);
-                                    });
-                                }
-                            });
+                                        adviceCol.Item().PaddingTop(6).Text(text =>
+                                        {
+                                            text.Span("112").Bold().FontColor(Colors.Red.Darken2);
+                                            text.Span(" – единый номер вызова экстренных оперативных служб").FontSize(8.5f);
+                                        });
+                                        adviceCol.Item().PaddingTop(3).Text(text =>
+                                        {
+                                            text.Span("103").Bold().FontColor(Colors.Red.Darken2);
+                                            text.Span(" – общефедеральный номер вызова скорой медицинской помощи").FontSize(8.5f);
+                                        });
+                                    }
+                                });
+                            }, paddingTop: 15);
                         });
 
                     // Footer
@@ -215,12 +217,18 @@ namespace Backend.Services
                                 .FontColor(Colors.Grey.Medium)
                                 .Justify();
 
-                            column.Item().PaddingTop(5).Text(x =>
+                            column.Item().PaddingTop(5).Row(row =>
                             {
-                                x.Span("Страница ");
-                                x.CurrentPageNumber();
-                                x.Span(" из ");
-                                x.TotalPages();
+                                row.RelativeItem().AlignLeft().AlignMiddle().Text(x =>
+                                {
+                                    x.Span("Страница ");
+                                    x.CurrentPageNumber();
+                                    x.Span(" из ");
+                                    x.TotalPages();
+                                });
+                                row.RelativeItem().AlignRight().AlignMiddle().Text(recordId)
+                                    .FontSize(9)
+                                    .FontColor(Colors.Grey.Darken2);
                             });
                         });
                 });
@@ -231,6 +239,49 @@ namespace Backend.Services
                 document.GeneratePdf(stream);
                 return stream.ToArray();
             }
+        }
+
+        private static void RenderReportSection(
+            ColumnDescriptor parent,
+            string title,
+            float keepTogetherMinHeight,
+            Action<ColumnDescriptor> buildContent,
+            float paddingTop = 0)
+        {
+            var sectionItem = parent.Item();
+            if (paddingTop > 0)
+            {
+                sectionItem = sectionItem.PaddingTop(paddingTop);
+            }
+
+            sectionItem
+                .EnsureSpace(keepTogetherMinHeight)
+                .Column(section =>
+                {
+                    section.Item().Text(title).FontSize(14).Bold().FontColor("#0284c7");
+                    buildContent(section);
+                });
+        }
+
+        private static void RenderReportSectionEntire(
+            ColumnDescriptor parent,
+            string title,
+            Action<ColumnDescriptor> buildContent,
+            float paddingTop = 0)
+        {
+            var sectionItem = parent.Item();
+            if (paddingTop > 0)
+            {
+                sectionItem = sectionItem.PaddingTop(paddingTop);
+            }
+
+            sectionItem
+                .ShowEntire()
+                .Column(section =>
+                {
+                    section.Item().Text(title).FontSize(14).Bold().FontColor("#0284c7");
+                    buildContent(section);
+                });
         }
 
         private static DateTime GetReportTime()
@@ -251,58 +302,6 @@ namespace Backend.Services
             }
 
             return DateTime.Now;
-        }
-
-        private static string GetBrandTitleFont()
-        {
-            return _brandFontAvailable ? BrandFontFamily : BrandTitleFallbackFont;
-        }
-
-        private static void EnsureBrandFontRegistered()
-        {
-            if (_brandFontRegistered)
-            {
-                return;
-            }
-
-            lock (BrandFontLock)
-            {
-                if (_brandFontRegistered)
-                {
-                    return;
-                }
-
-                var fontsDir = Path.Combine(AppContext.BaseDirectory, "Assets", "Fonts");
-                var fontCandidates = new[]
-                {
-                    "plus-jakarta-sans-latin-800-normal.ttf",
-                    "plus-jakarta-sans-latin-800-normal.woff",
-                    "plus-jakarta-sans-latin-800-normal.woff2",
-                };
-
-                foreach (var fileName in fontCandidates)
-                {
-                    var fontPath = Path.Combine(fontsDir, fileName);
-                    if (!File.Exists(fontPath))
-                    {
-                        continue;
-                    }
-
-                    try
-                    {
-                        using var stream = File.OpenRead(fontPath);
-                        FontManager.RegisterFontWithCustomName(BrandFontFamily, stream);
-                        _brandFontAvailable = true;
-                        break;
-                    }
-                    catch (Exception)
-                    {
-                        // Try next format; PDF generation must not depend on a single font file.
-                    }
-                }
-
-                _brandFontRegistered = true;
-            }
         }
 
         private string GetThreatLevelText(int level)
