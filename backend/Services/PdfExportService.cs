@@ -99,9 +99,13 @@ namespace Backend.Services
                                             symptomCol.Item().PaddingLeft(10).Text(string.Join(", ", detectedSymptoms)).Bold().FontColor(Colors.Green.Darken3);
                                         }
 
-                                        if (assumedSymptoms != null && assumedSymptoms.Count > 0)
+                                        symptomCol.Item().PaddingTop(8).Text("Косвенные клинические симптомы:").Bold().FontSize(10).FontColor(Colors.Grey.Darken3);
+                                        if (assumedSymptoms == null || assumedSymptoms.Count == 0)
                                         {
-                                            symptomCol.Item().PaddingTop(8).Text("Косвенные клинические симптомы:").Bold().FontSize(10).FontColor(Colors.Grey.Darken3);
+                                            symptomCol.Item().PaddingLeft(10).Text("Симптомы не обнаружены.").Italic().FontColor(Colors.Grey.Medium);
+                                        }
+                                        else
+                                        {
                                             symptomCol.Item().PaddingLeft(10).Text(string.Join(", ", assumedSymptoms)).Bold().FontColor(Colors.Blue.Darken3);
                                         }
                                     });
