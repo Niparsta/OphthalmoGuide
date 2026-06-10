@@ -13,6 +13,7 @@ namespace Backend.Services
         private const float BrandLogoHeight = 46;
         private const float SectionTitleWithContentMinHeight = 56f;
         private const float SectionTableMinHeight = 100f;
+        private static readonly TimeZoneInfo MoscowTimeZone = ResolveMoscowTimeZone();
         private static readonly string LogoPath = Path.Combine(AppContext.BaseDirectory, "Assets", "Images", "logo_black.png");
 
         static PdfExportService()
@@ -25,8 +26,9 @@ namespace Backend.Services
             return $"OphthalmoGuide_{reportTime:yyyyMMdd_HHmmss}.pdf";
         }
 
-        public byte[] GenerateReportPdf(string recordId, string complaintText, List<string> detectedSymptoms, List<string> assumedSymptoms, List<DiseaseMatch> results)
+        public byte[] GenerateReportPdf(string recordId, DateTime resultReceivedAtUtc, string complaintText, List<string> detectedSymptoms, List<string> assumedSymptoms, List<DiseaseMatch> results)
         {
+            var resultReceivedTime = ConvertUtcToMoscow(resultReceivedAtUtc);
             var reportTime = GetReportTime();
 
             var document = Document.Create(container =>
@@ -42,26 +44,23 @@ namespace Backend.Services
                     page.Header()
                         .Column(headerColumn =>
                         {
-                            headerColumn.Item().Row(row =>
+                            headerColumn.Item()
+                                .Height(BrandLogoHeight)
+                                .Image(LogoPath)
+                                .FitHeight();
+
+                            headerColumn.Item().PaddingTop(0).Row(row =>
                             {
-                                row.RelativeItem().Column(column =>
-                                {
-                                    column.Item()
-                                        .Height(BrandLogoHeight)
-                                        .Image(LogoPath)
-                                        .FitHeight();
+                                row.RelativeItem().Text("Информационно-справочная система предварительной диагностики офтальмологических заболеваний")
+                                    .FontSize(9)
+                                    .FontColor("#64748B");
 
-                                    column.Item().PaddingTop(4).Text("Информационно-справочная система предварительной диагностики офтальмологических заболеваний")
-                                        .FontSize(9)
-                                        .FontColor("#64748B");
-                                });
-
-                                row.ConstantItem(140).AlignRight().AlignMiddle().Column(column =>
+                                row.ConstantItem(240).AlignTop().Column(column =>
                                 {
-                                    column.Item().Text($"Дата: {reportTime:dd.MM.yyyy}")
+                                    column.Item().AlignRight().Text($"Результат получен: {FormatMoscowDateTime(resultReceivedTime)}")
                                         .FontSize(9)
                                         .FontColor(Colors.Grey.Darken2);
-                                    column.Item().Text($"Время: {reportTime:HH:mm:ss} мск")
+                                    column.Item().AlignRight().Text($"Отчёт сформирован: {FormatMoscowDateTime(reportTime)}")
                                         .FontSize(9)
                                         .FontColor(Colors.Grey.Darken2);
                                 });
@@ -286,12 +285,31 @@ namespace Backend.Services
 
         private static DateTime GetReportTime()
         {
-            var configuredTimeZone = Environment.GetEnvironmentVariable("TZ") ?? "Europe/Moscow";
+            return ConvertUtcToMoscow(DateTime.UtcNow);
+        }
+
+        public static DateTime ConvertUtcToMoscow(DateTime utcTime)
+        {
+            var utc = utcTime.Kind == DateTimeKind.Unspecified
+                ? DateTime.SpecifyKind(utcTime, DateTimeKind.Utc)
+                : utcTime.ToUniversalTime();
+
+            return TimeZoneInfo.ConvertTimeFromUtc(utc, MoscowTimeZone);
+        }
+
+        private static TimeZoneInfo ResolveMoscowTimeZone()
+        {
+            var configuredTimeZone = Environment.GetEnvironmentVariable("TZ");
             foreach (var timeZoneId in new[] { configuredTimeZone, "Europe/Moscow", "Russian Standard Time" })
             {
+                if (string.IsNullOrWhiteSpace(timeZoneId))
+                {
+                    continue;
+                }
+
                 try
                 {
-                    return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById(timeZoneId));
+                    return TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
                 }
                 catch (TimeZoneNotFoundException)
                 {
@@ -301,7 +319,13 @@ namespace Backend.Services
                 }
             }
 
-            return DateTime.Now;
+            throw new InvalidOperationException(
+                "Не удалось определить московский часовой пояс. Установите TZ=Europe/Moscow или пакет tzdata.");
+        }
+
+        private static string FormatMoscowDateTime(DateTime moscowTime)
+        {
+            return $"{moscowTime:dd.MM.yyyy, HH:mm:ss} мск";
         }
 
         private string GetThreatLevelText(int level)

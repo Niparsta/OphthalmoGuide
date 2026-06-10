@@ -524,21 +524,7 @@ app.MapPost("/api/analyze", async (HttpContext context, AnalyzeRequest request, 
 
 static IResult BuildPdfFileResult(byte[] pdfBytes)
 {
-    var reportTime = System.DateTime.Now;
-    var configuredTimeZone = System.Environment.GetEnvironmentVariable("TZ") ?? "Europe/Moscow";
-    foreach (var timeZoneId in new[] { configuredTimeZone, "Europe/Moscow", "Russian Standard Time" })
-    {
-        try
-        {
-            reportTime = System.TimeZoneInfo.ConvertTimeFromUtc(
-                System.DateTime.UtcNow,
-                System.TimeZoneInfo.FindSystemTimeZoneById(timeZoneId));
-            break;
-        }
-        catch (System.TimeZoneNotFoundException) { }
-        catch (System.InvalidTimeZoneException) { }
-    }
-
+    var reportTime = PdfExportService.ConvertUtcToMoscow(System.DateTime.UtcNow);
     return Results.File(pdfBytes, "application/pdf", PdfExportService.GetFileName(reportTime));
 }
 
@@ -573,6 +559,7 @@ app.MapGet("/api/report/pdf", async (HttpContext context, string? id, AppDbConte
 
         var pdfBytes = pdfService.GenerateReportPdf(
             entity.Id,
+            entity.Timestamp,
             entity.ComplaintText,
             entity.DetectedSymptoms,
             entity.AssumedSymptoms,
