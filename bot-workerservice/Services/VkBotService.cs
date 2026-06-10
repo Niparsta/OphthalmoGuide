@@ -301,7 +301,7 @@ namespace bot_workerservice.Services
                     text = await RecognizeSpeechAsync(am.LinkMp3.ToString(), ct) ?? "";
                     if (string.IsNullOrWhiteSpace(text))
                     {
-                        await SendAsync(userId, "❌ Не удалось распознать речь. Попробуйте ещё раз или отправьте текстом.");
+                        await SendAsync(userId, "❌ Не удалось распознать речь. Попробуйте ещё раз или опишите жалобы текстом.");
                         return;
                     }
                     await SendAsync(userId, $"📝 Распознано:\n\"{text}\"");

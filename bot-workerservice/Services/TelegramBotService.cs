@@ -222,7 +222,7 @@ namespace bot_workerservice.Services
                     if (string.IsNullOrWhiteSpace(text))
                     {
                         await bot.SendTextMessageAsync(chatId,
-                            "❌ Не удалось распознать речь. Попробуйте ещё раз или отправьте текстом.",
+                            "❌ Не удалось распознать речь. Попробуйте ещё раз или опишите жалобы текстом.",
                             cancellationToken: ct);
                         return;
                     }
