@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { Notivue, Notifications, push, darkTheme, lightTheme } from 'notivue'
 import { FilterMatchMode, FilterService } from '@primevue/core/api'
@@ -861,11 +861,34 @@ async function checkAdminRoute(options: { userInitiated?: boolean } = {}) {
     adminSessionCheckInFlight = false
   }
 }
+// Вспомогательная функция для генерации безопасного ID с многоуровневым фолбеком
+function generateSecureId(): string {
+  if (typeof window !== 'undefined' && window.crypto) {
+    // 1. Современный и быстрый стандарт
+    if (typeof window.crypto.randomUUID === 'function') {
+      return window.crypto.randomUUID();
+    }
+    
+    // 2. Безопасный фолбек для старых браузеров (поддерживается с 2013-2015 годов)
+    if (typeof window.crypto.getRandomValues === 'function') {
+      const typedArray = new Uint32Array(4);
+      window.crypto.getRandomValues(typedArray);
+      // Преобразуем массив случайных чисел в строку в 36-ричной системе
+      return Array.from(typedArray).map(val => val.toString(36)).join('-');
+    }
+  }
+
+  // 3. Самый крайний случай – математический фолбек с использованием микросекунд (performance.now) для минимизации коллизий
+  const timePart = typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? Math.floor(performance.now()).toString(36)
+    : '';
+  return Math.random().toString(36).substring(2, 15) + '_' + Date.now().toString(36) + timePart;
+}
 
 function initSession() {
   let id = localStorage.getItem('og_session_id')
   if (!id) {
-    id = 'sess_' + (window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : Math.random().toString(36).substring(2, 15) + '_' + Date.now())
+    id = 'sess_' + generateSecureId()
     localStorage.setItem('og_session_id', id)
   }
   sessionId.value = id
