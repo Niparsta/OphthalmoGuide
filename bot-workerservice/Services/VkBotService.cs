@@ -197,18 +197,33 @@ namespace bot_workerservice.Services
                             var val = btnProp.GetString();
                             if (val == "agree")
                             {
+                                if (state != "disclaimer")
+                                {
+                                    await SendAsync(userId, "Для начала работы примите дисклеймер – напишите \"Начать\".");
+                                    return;
+                                }
                                 await NewSession(db, stKey, sesKey, userId);
                                 await SendAsync(userId, "✅ Спасибо!\n\nРасскажите, что Вы чувствуете? Опишите жалобы текстом или голосовым сообщением.", ClearKeyboard());
                                 return;
                             }
                             if (val == "disagree")
                             {
+                                if (state != "disclaimer")
+                                {
+                                    await SendAsync(userId, "Для начала работы примите дисклеймер – напишите \"Начать\".");
+                                    return;
+                                }
                                 await db.StringSetAsync(stKey, "disclaimer");
                                 await SendAsync(userId, "❌ Без согласия диагностика невозможна. Напишите \"Начать\", чтобы вернуться к соглашению.");
                                 return;
                             }
                             if (val == "restart" || val == "clear")
                             {
+                                if (state != "active" && state != "results")
+                                {
+                                    await SendAsync(userId, "Для начала работы примите дисклеймер – напишите \"Начать\".");
+                                    return;
+                                }
                                 await RestartSessionAsync(userId, db, stKey, sesKey);
                                 return;
                             }
@@ -218,6 +233,11 @@ namespace bot_workerservice.Services
                         if (doc.RootElement.TryGetProperty("cmd", out var cmd) && cmd.GetString() == "pdf" &&
                             doc.RootElement.TryGetProperty("id", out var idProp))
                         {
+                            if (state != "active" && state != "results")
+                            {
+                                await SendAsync(userId, "Для начала работы примите дисклеймер – напишите \"Начать\".");
+                                return;
+                            }
                             var recordId  = idProp.GetString();
                             var sessionId = (string?)await db.StringGetAsync(sesKey);
                             await SendAsync(userId, "📥 Формирую отчёт…");
@@ -274,6 +294,11 @@ namespace bot_workerservice.Services
                     text.Equals("🔄 начать заново", StringComparison.OrdinalIgnoreCase) ||
                     text.Equals("/reset", StringComparison.OrdinalIgnoreCase))
                 {
+                    if (state != "active" && state != "results")
+                    {
+                        await SendAsync(userId, "Для начала работы примите дисклеймер – напишите \"Начать\".");
+                        return;
+                    }
                     await RestartSessionAsync(userId, db, stKey, sesKey);
                     return;
                 }
@@ -287,7 +312,7 @@ namespace bot_workerservice.Services
                 // 4. Дисклеймер не принят (или первое обращение)
                 if (state != "active")
                 {
-                    await SendAsync(userId, "Для начала работы примите дисклеймер — напишите \"Начать\".");
+                    await SendAsync(userId, "Для начала работы примите дисклеймер – напишите \"Начать\".");
                     return;
                 }
 
@@ -773,11 +798,11 @@ namespace bot_workerservice.Services
                 }
                 else if (i == 3)
                 {
-                    sb.Append($"Следующее возможное заболевание — {d.Disease}, уровень угрозы: {threatText}. ");
+                    sb.Append($"Следующее возможное заболевание – {d.Disease}, уровень угрозы: {threatText}. ");
                 }
                 else if (i == 4)
                 {
-                    sb.Append($"И на пятом месте — {d.Disease}, уровень угрозы: {threatText}. ");
+                    sb.Append($"И на пятом месте – {d.Disease}, уровень угрозы: {threatText}. ");
                 }
             }
 

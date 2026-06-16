@@ -123,7 +123,7 @@ namespace bot_workerservice.Services
                 var sesKey = $"bot:tg:session:{userId}";
                 var state  = (string?)await db.StringGetAsync(stKey);
 
-                // 1. /start — показ дисклеймера
+                // 1. /start – показ дисклеймера
                 if (text == "/start")
                 {
                     if (state == "active")
@@ -146,6 +146,13 @@ namespace bot_workerservice.Services
                     text?.Equals("начать заново", StringComparison.OrdinalIgnoreCase) == true || 
                     text?.Equals("🔄 начать заново", StringComparison.OrdinalIgnoreCase) == true)
                 {
+                    if (state != "active" && state != "results")
+                    {
+                        await bot.SendTextMessageAsync(chatId,
+                            "Для начала работы примите дисклеймер – отправьте /start",
+                            cancellationToken: ct);
+                        return;
+                    }
                     await RestartSessionAsync(bot, chatId, db, stKey, sesKey, userId, ct);
                     return;
                 }
@@ -153,6 +160,13 @@ namespace bot_workerservice.Services
                 // Обработка ответов согласия/несогласия
                 if (text == "✅ Согласен")
                 {
+                    if (state != "disclaimer")
+                    {
+                        await bot.SendTextMessageAsync(chatId,
+                            "Для начала работы примите дисклеймер – отправьте /start",
+                            cancellationToken: ct);
+                        return;
+                    }
                     await NewSession(db, stKey, sesKey, userId);
                     await bot.SendTextMessageAsync(chatId,
                         "✅ Спасибо!\n\nРасскажите, что Вы чувствуете? Опишите жалобы текстом или голосовым сообщением.",
@@ -162,6 +176,14 @@ namespace bot_workerservice.Services
 
                 if (text == "❌ Не согласен")
                 {
+                    if (state != "disclaimer")
+                    {
+                        await bot.SendTextMessageAsync(chatId,
+                            "Для начала работы примите дисклеймер – отправьте /start",
+                            cancellationToken: ct);
+                        return;
+                    }
+                    await db.StringSetAsync(stKey, "disclaimer");
                     await bot.SendTextMessageAsync(chatId,
                         "❌ Без согласия диагностика невозможна. Отправьте /start, чтобы вернуться к соглашению.",
                         replyMarkup: new ReplyKeyboardRemove(), cancellationToken: ct);
@@ -170,6 +192,13 @@ namespace bot_workerservice.Services
 
                 if (text == "📥 Скачать отчёт")
                 {
+                    if (state != "active" && state != "results")
+                    {
+                        await bot.SendTextMessageAsync(chatId,
+                            "Для начала работы примите дисклеймер – отправьте /start",
+                            cancellationToken: ct);
+                        return;
+                    }
                     var lastPdfKey = $"bot:tg:last_pdf:{userId}";
                     var recordId = (string?)await db.StringGetAsync(lastPdfKey);
                     if (!string.IsNullOrEmpty(recordId))
@@ -204,7 +233,7 @@ namespace bot_workerservice.Services
                 if (state != "active")
                 {
                     await bot.SendTextMessageAsync(chatId,
-                        "Для начала работы примите дисклеймер — отправьте /start",
+                        "Для начала работы примите дисклеймер – отправьте /start",
                         cancellationToken: ct);
                     return;
                 }
@@ -280,10 +309,16 @@ namespace bot_workerservice.Services
             var db     = _redis.GetDatabase();
             var stKey  = $"bot:tg:state:{userId}";
             var sesKey = $"bot:tg:session:{userId}";
+            var state  = (string?)await db.StringGetAsync(stKey);
 
             switch (cb.Data)
             {
                 case "agree":
+                    if (state != "disclaimer")
+                    {
+                        await bot.AnswerCallbackQueryAsync(cb.Id, "Пожалуйста, сначала отправьте /start", cancellationToken: ct);
+                        return;
+                    }
                     await NewSession(db, stKey, sesKey, userId);
                     await bot.AnswerCallbackQueryAsync(cb.Id, "Принято", cancellationToken: ct);
                     await bot.SendTextMessageAsync(chatId.Value,
@@ -292,6 +327,12 @@ namespace bot_workerservice.Services
                     break;
 
                 case "disagree":
+                    if (state != "disclaimer")
+                    {
+                        await bot.AnswerCallbackQueryAsync(cb.Id, "Пожалуйста, сначала отправьте /start", cancellationToken: ct);
+                        return;
+                    }
+                    await db.StringSetAsync(stKey, "disclaimer");
                     await bot.AnswerCallbackQueryAsync(cb.Id, cancellationToken: ct);
                     await bot.SendTextMessageAsync(chatId.Value,
                         "❌ Без согласия диагностика невозможна. Отправьте /start, чтобы вернуться к соглашению.",
@@ -301,6 +342,11 @@ namespace bot_workerservice.Services
                 case "restart":
                 case "clear":
                 case "reset":
+                    if (state != "active" && state != "results")
+                    {
+                        await bot.AnswerCallbackQueryAsync(cb.Id, "Пожалуйста, сначала отправьте /start", cancellationToken: ct);
+                        return;
+                    }
                     await bot.AnswerCallbackQueryAsync(cb.Id, "Перезапущено", cancellationToken: ct);
                     await RestartSessionAsync(bot, chatId.Value, db, stKey, sesKey, userId, ct);
                     break;
@@ -308,9 +354,15 @@ namespace bot_workerservice.Services
                 default:
                     if (cb.Data?.StartsWith("pdf:") == true)
                     {
+                        if (state != "active" && state != "results")
+                        {
+                            await bot.AnswerCallbackQueryAsync(cb.Id, "Пожалуйста, сначала отправьте /start", cancellationToken: ct);
+                            return;
+                        }
                         var recordId  = cb.Data[4..];
                         var sessionId = (string?)await db.StringGetAsync(sesKey);
-                        await bot.AnswerCallbackQueryAsync(cb.Id, "Формирую отчёт…", cancellationToken: ct);
+                        await bot.AnswerCallbackQueryAsync(cb.Id, cancellationToken: ct);
+                        await bot.SendTextMessageAsync(chatId.Value, "📥 Формирую отчёт…", cancellationToken: ct);
 
                         var (pdf, filename) = await DownloadPdfAsync(sessionId ?? "", recordId);
                         if (pdf != null)
@@ -662,11 +714,11 @@ namespace bot_workerservice.Services
                 }
                 else if (i == 3)
                 {
-                    sb.Append($"Следующее возможное заболевание — {d.Disease}, уровень угрозы: {threatText}. ");
+                    sb.Append($"Следующее возможное заболевание – {d.Disease}, уровень угрозы: {threatText}. ");
                 }
                 else if (i == 4)
                 {
-                    sb.Append($"И на пятом месте — {d.Disease}, уровень угрозы: {threatText}. ");
+                    sb.Append($"И на пятом месте – {d.Disease}, уровень угрозы: {threatText}. ");
                 }
             }
 
