@@ -36,7 +36,7 @@ async function injectCapHeaders(headers: Record<string, string>, endpoint: strin
 
   try {
     const capInstance = new Cap({
-      apiEndpoint: `${window.location.origin}/${CAP_SITE_KEY}/`
+      apiEndpoint: `${window.location.protocol}//cap.${window.location.host}/${CAP_SITE_KEY}/`
     })
     const solution = await capInstance.solve()
     if (!solution || !solution.token) {
