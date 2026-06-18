@@ -11,88 +11,48 @@ import { API_BASE, apiUrl } from './services/api'
 import forbiddenHtml from '../public/403.html?raw'
 import unauthorizedHtml from '../public/401.html?raw'
 import { createConnectivityMonitor, type ConnectivityMonitor } from './connectivityMonitor'
+import Cap from 'cap-widget'
 import './App.css'
 
-// --- Altcha CAPTCHA system ---
-interface AltchaChallenge {
-  algorithm: string
-  challenge: string
-  salt: string
-  signature: string
-  maxnumber: number
+// --- Cap CAPTCHA system ---
+const CAP_SITE_KEY = import.meta.env.VITE_CAP_SITE_KEY || 'f31d5d6959'
+
+let activeCapToken: string | null = sessionStorage.getItem('og_cap_token')
+let capTokenExpiresAt = parseInt(sessionStorage.getItem('og_cap_token_expires') || '0', 10)
+
+function clearCapCache() {
+  activeCapToken = null
+  capTokenExpiresAt = 0
+  sessionStorage.removeItem('og_cap_token')
+  sessionStorage.removeItem('og_cap_token_expires')
 }
 
-interface AltchaPayload {
-  algorithm: string
-  challenge: string
-  salt: string
-  signature: string
-  number: number
-}
-
-let activeAltchaToken: string | null = sessionStorage.getItem('og_altcha_token')
-let altchaTokenExpiresAt = parseInt(sessionStorage.getItem('og_altcha_token_expires') || '0', 10)
-
-function clearAltchaCache() {
-  activeAltchaToken = null
-  altchaTokenExpiresAt = 0
-  sessionStorage.removeItem('og_altcha_token')
-  sessionStorage.removeItem('og_altcha_token_expires')
-}
-
-async function solveAltcha(challengeObj: AltchaChallenge): Promise<AltchaPayload> {
-  const { challenge, salt, maxnumber } = challengeObj
-  const max = maxnumber || 50000
-  for (let number = 0; number <= max; number++) {
-    const input = salt + number.toString()
-    const msgBuffer = new TextEncoder().encode(input)
-    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer)
-    const hashArray = Array.from(new Uint8Array(hashBuffer))
-    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
-    if (hashHex === challenge) {
-      return {
-        algorithm: challengeObj.algorithm,
-        challenge,
-        salt,
-        signature: challengeObj.signature,
-        number
-      }
-    }
-  }
-  throw new Error('Altcha challenge could not be solved')
-}
-
-async function injectAltchaHeaders(headers: Record<string, string>, endpoint: string): Promise<void> {
+async function injectCapHeaders(headers: Record<string, string>, endpoint: string): Promise<void> {
   const now = Date.now()
-  if (activeAltchaToken && now < altchaTokenExpiresAt - 60000) {
-    headers['X-Altcha-Token'] = activeAltchaToken
+  if (activeCapToken && now < capTokenExpiresAt - 60000) {
+    headers['X-Cap-Token'] = activeCapToken
     return
   }
 
   try {
-    const res = await fetch(`${API_BASE}/api/altcha/challenge`)
-    if (!res.ok) throw new Error('Failed to fetch challenge')
-    const challenge: AltchaChallenge = await res.json()
-    const solution = await solveAltcha(challenge)
-    
-    let expiresAt = now + 15 * 60 * 1000
-    const parts = challenge.salt.split('?expires=')
-    const expiresPart = parts[1]
-    if (parts.length === 2 && expiresPart) {
-      const expiresSec = parseInt(expiresPart, 10)
-      expiresAt = expiresSec * 1000
+    const capInstance = new Cap({
+      apiEndpoint: `${window.location.origin}/${CAP_SITE_KEY}/`
+    })
+    const solution = await capInstance.solve()
+    if (!solution || !solution.token) {
+      throw new Error('Cap challenge could not be solved')
     }
 
-    activeAltchaToken = solution.signature
-    altchaTokenExpiresAt = expiresAt
-    sessionStorage.setItem('og_altcha_token', solution.signature)
-    sessionStorage.setItem('og_altcha_token_expires', String(expiresAt))
+    activeCapToken = solution.token
+    // Set local cache expiration to 15 minutes
+    const expiresAt = now + 15 * 60 * 1000
+    capTokenExpiresAt = expiresAt
+    sessionStorage.setItem('og_cap_token', solution.token)
+    sessionStorage.setItem('og_cap_token_expires', String(expiresAt))
 
-    const jsonStr = JSON.stringify(solution)
-    const base64 = btoa(unescape(encodeURIComponent(jsonStr)))
-    headers['X-Altcha-Payload'] = base64
+    headers['X-Cap-Payload'] = solution.token
   } catch (err) {
-    console.error('Altcha solver error:', err)
+    console.error('Cap solver error:', err)
     throw err
   }
 }
@@ -990,13 +950,13 @@ async function apiFetch(endpoint: string, options: Omit<RequestInit, 'body'> & {
   const heavyEndpoints = ['/api/analyze', '/api/speech/recognize', '/api/speech/synthesize', '/api/history']
   if (heavyEndpoints.includes(endpoint)) {
     try {
-      await injectAltchaHeaders(headers, endpoint)
+      await injectCapHeaders(headers, endpoint)
     } catch (err) {
-      console.error('Failed to inject Altcha headers:', err)
+      console.error('Failed to inject Cap headers:', err)
       if (endpoint !== '/api/history') {
         showNotification('Не удалось запустить проверку безопасности. Проверьте соединение с сервером.', 'error')
       }
-      throw new Error('altcha_solve_failed')
+      throw new Error('cap_solve_failed')
     }
   }
 
@@ -1020,14 +980,14 @@ async function apiFetch(endpoint: string, options: Omit<RequestInit, 'body'> & {
   if (response.status === 400 && heavyEndpoints.includes(endpoint)) {
     try {
       const errJson = await response.clone().json()
-      if (errJson && (errJson.code === 'altcha_failed' || errJson.code === 'altcha_required' || errJson.code === 'altcha_invalid' || errJson.code === 'altcha_used')) {
-        clearAltchaCache()
-        delete headers['X-Altcha-Token']
-        await injectAltchaHeaders(headers, endpoint)
+      if (errJson && (errJson.code === 'cap_failed' || errJson.code === 'cap_required' || errJson.code === 'cap_invalid' || errJson.code === 'cap_used')) {
+        clearCapCache()
+        delete headers['X-Cap-Token']
+        await injectCapHeaders(headers, endpoint)
         response = await doFetch()
       }
     } catch (err) {
-      console.error('Altcha auto-retry failed:', err)
+      console.error('Cap auto-retry failed:', err)
     }
   }
 
@@ -1042,8 +1002,8 @@ async function apiFetch(endpoint: string, options: Omit<RequestInit, 'body'> & {
     if (response.status === 400) {
       try {
         const errJson = await response.clone().json()
-        if (errJson && (errJson.code === 'altcha_failed' || errJson.code === 'altcha_required' || errJson.code === 'altcha_invalid' || errJson.code === 'altcha_used')) {
-          clearAltchaCache()
+        if (errJson && (errJson.code === 'cap_failed' || errJson.code === 'cap_required' || errJson.code === 'cap_invalid' || errJson.code === 'cap_used')) {
+          clearCapCache()
           showNotification('Не удалось пройти фоновую проверку безопасности (защита от спама). Пожалуйста, повторите попытку.', 'error')
         }
       } catch {}
@@ -1206,7 +1166,7 @@ async function analyzeComplaint() {
       })
     }
   } catch (err: any) {
-    if (err?.name === 'AbortError' || err?.message === 'altcha_solve_failed') {
+    if (err?.name === 'AbortError' || err?.message === 'cap_solve_failed') {
       return
     }
     showSafeError('Ошибка при анализе жалоб, попробуйте ещё раз')
@@ -1467,7 +1427,7 @@ async function sendVoiceBlobToSTT(blob: Blob) {
       showNotification('Голос не распознан – запишите сообщение ещё раз', 'warning')
     }
   } catch (err: any) {
-    if (err?.message === 'altcha_solve_failed') {
+    if (err?.message === 'cap_solve_failed') {
       return
     }
     showSafeError('Не удалось распознать речь, проверьте микрофон')
@@ -1543,7 +1503,7 @@ async function playTtsVoice() {
     await audioElement.value.play()
   } catch (err: any) {
     isSynthesizing.value = false
-    if (err?.message === 'altcha_solve_failed') {
+    if (err?.message === 'cap_solve_failed') {
       return
     }
     showSafeError('Не удалось воспроизвести голосовое сообщение')
@@ -1611,11 +1571,11 @@ async function fetchPdfBlob(
   }
 
   try {
-    await injectAltchaHeaders(headers, '/api/report/pdf')
+    await injectCapHeaders(headers, '/api/report/pdf')
   } catch (err) {
-    console.error('Failed to obtain Altcha payload for PDF download:', err)
+    console.error('Failed to obtain Cap payload for PDF download:', err)
     showNotification('Не удалось запустить проверку безопасности для скачивания PDF.', 'error')
-    throw new Error('altcha_solve_failed')
+    throw new Error('cap_solve_failed')
   }
 
   let url = `${API_BASE}/api/report/pdf`
@@ -1629,14 +1589,14 @@ async function fetchPdfBlob(
     if (response.status === 400) {
       try {
         const errJson = await response.clone().json()
-        if (errJson && (errJson.code === 'altcha_failed' || errJson.code === 'altcha_required' || errJson.code === 'altcha_invalid' || errJson.code === 'altcha_used')) {
-          clearAltchaCache()
-          delete headers['X-Altcha-Token']
-          await injectAltchaHeaders(headers, '/api/report/pdf')
+        if (errJson && (errJson.code === 'cap_failed' || errJson.code === 'cap_required' || errJson.code === 'cap_invalid' || errJson.code === 'cap_used')) {
+          clearCapCache()
+          delete headers['X-Cap-Token']
+          await injectCapHeaders(headers, '/api/report/pdf')
           response = await fetch(url, { method: 'GET', headers })
         }
       } catch (err) {
-        console.error('Altcha PDF auto-retry failed:', err)
+        console.error('Cap PDF auto-retry failed:', err)
       }
     }
   }
@@ -1645,8 +1605,8 @@ async function fetchPdfBlob(
     if (response.status === 400) {
       try {
         const errJson = await response.clone().json()
-        if (errJson && (errJson.code === 'altcha_failed' || errJson.code === 'altcha_required' || errJson.code === 'altcha_invalid' || errJson.code === 'altcha_used')) {
-          clearAltchaCache()
+        if (errJson && (errJson.code === 'cap_failed' || errJson.code === 'cap_required' || errJson.code === 'cap_invalid' || errJson.code === 'cap_used')) {
+          clearCapCache()
           showNotification('Не удалось пройти фоновую проверку безопасности (защита от спама). Пожалуйста, повторите попытку.', 'error')
         }
       } catch {}
@@ -2471,12 +2431,12 @@ onUnmounted(() => {
                 <span v-else>Начать диагностику</span>
               </button>
               
-              <div class="altcha-protection-badge">
-                <svg class="altcha-badge-icon" viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.5" fill="none">
+              <div class="cap-protection-badge">
+                <svg class="cap-badge-icon" viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.5" fill="none">
                   <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                   <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
                 </svg>
-                <span>Защищено <a href="https://altcha.org" target="_blank" rel="noopener">ALTCHA</a></span>
+                <span>Под защитой <a href="https://trycap.dev/" target="_blank" rel="noopener">Cap</a></span>
               </div>
             </div>
           </div>

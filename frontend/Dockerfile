@@ -5,8 +5,10 @@ RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 COPY . .
 ARG VITE_AUTHENTIK_CLIENT_ID
 ARG VITE_AUTHENTIK_ENABLED
+ARG VITE_CAP_SITE_KEY
 ENV VITE_AUTHENTIK_CLIENT_ID=$VITE_AUTHENTIK_CLIENT_ID
 ENV VITE_AUTHENTIK_ENABLED=$VITE_AUTHENTIK_ENABLED
+ENV VITE_CAP_SITE_KEY=$VITE_CAP_SITE_KEY
 RUN npm run build
 
 # Официальный образ: angie:latest / angie:minimal (тега :alpine нет).

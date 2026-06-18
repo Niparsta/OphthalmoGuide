@@ -957,7 +957,7 @@ body {
   gap: 12px;
 }
 
-.altcha-protection-badge {
+.cap-protection-badge {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -967,17 +967,17 @@ body {
   transition: opacity var(--transition-smooth, 0.2s);
 }
 
-.altcha-protection-badge:hover {
+.cap-protection-badge:hover {
   opacity: 1;
 }
 
-.altcha-protection-badge a {
+.cap-protection-badge a {
   color: inherit;
   text-decoration: underline;
   font-weight: 500;
 }
 
-.altcha-protection-badge svg {
+.cap-protection-badge svg {
   color: var(--accent);
 }
 

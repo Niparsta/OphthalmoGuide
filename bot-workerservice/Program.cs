@@ -7,7 +7,7 @@ using Prometheus;
 
 var builder = Host.CreateApplicationBuilder(args);
 
-// Регистрация HttpClient для вызовов API бэкенда с API-ключом авторизации ботов для обхода Altcha
+// Регистрация HttpClient для вызовов API бэкенда с API-ключом авторизации ботов для обхода Cap
 builder.Services.AddHttpClient(string.Empty, client =>
 {
     var apiKey = builder.Configuration["Bot:ApiKey"] ?? "default_bot_api_key_abc123";

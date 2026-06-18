@@ -5,7 +5,7 @@ using System.Text.Json;
 
 namespace backend.Services
 {
-    public class AltchaChallenge
+    public class CapChallenge
     {
         public string algorithm { get; set; } = "SHA-256";
         public string challenge { get; set; } = "";
@@ -14,7 +14,7 @@ namespace backend.Services
         public int maxnumber { get; set; } = 50000;
     }
 
-    public class AltchaPayload
+    public class CapPayload
     {
         public string algorithm { get; set; } = "";
         public string challenge { get; set; } = "";
@@ -23,16 +23,16 @@ namespace backend.Services
         public int number { get; set; }
     }
 
-    public class AltchaService
+    public class CapService
     {
         private readonly string _secret;
 
-        public AltchaService(string secret)
+        public CapService(string secret)
         {
-            _secret = string.IsNullOrEmpty(secret) ? "default_altcha_secret_key_12345" : secret;
+            _secret = string.IsNullOrEmpty(secret) ? "default_cap_secret_key_12345" : secret;
         }
 
-        public AltchaChallenge GenerateChallenge(int maxNumber = 50000)
+        public CapChallenge GenerateChallenge(int maxNumber = 50000)
         {
             var saltBytes = new byte[16];
             RandomNumberGenerator.Fill(saltBytes);
@@ -53,7 +53,7 @@ namespace backend.Services
             // Compute signature = HMAC-SHA256(challenge, secret)
             var signature = ComputeHmac(challenge);
 
-            return new AltchaChallenge
+            return new CapChallenge
             {
                 challenge = challenge,
                 salt = salt,
@@ -62,7 +62,7 @@ namespace backend.Services
             };
         }
 
-        public bool VerifyPayload(AltchaPayload payload)
+        public bool VerifyPayload(CapPayload payload)
         {
             if (payload == null || string.IsNullOrWhiteSpace(payload.challenge) || string.IsNullOrWhiteSpace(payload.salt) || string.IsNullOrWhiteSpace(payload.signature))
             {

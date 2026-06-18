@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@primeuix/themes": "^2.0.3",
+    "cap-widget": "^0.1.56",
     "notivue": "^2.4.5",
     "primevue": "^4.5.5",
     "vue": "^3.5.32"

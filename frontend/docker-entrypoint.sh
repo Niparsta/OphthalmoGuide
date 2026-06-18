@@ -45,7 +45,7 @@ ssl_certificate_key ${CERT_DIR}/key.pem;
 EOF
 fi
 
-sed "s/__PUBLIC_HOST__/${PUBLIC_HOST}/g" /etc/angie/angie.conf.template > /etc/angie/angie.conf
+sed -e "s/__PUBLIC_HOST__/${PUBLIC_HOST}/g" -e "s/__CAP_SITE_KEY__/${CAP_SITE_KEY:-f31d5d6959}/g" /etc/angie/angie.conf.template > /etc/angie/angie.conf
 
 if [ "$use_acme" -eq 1 ]; then
   sed -i '/# MARKER_HTTP_REDIRECT_START/,/# MARKER_HTTP_REDIRECT_END/d' /etc/angie/angie.conf

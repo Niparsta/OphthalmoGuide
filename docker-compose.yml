@@ -5,6 +5,7 @@ services:
       args:
         - VITE_AUTHENTIK_CLIENT_ID=${AUTHENTIK_CLIENT_ID}
         - VITE_AUTHENTIK_ENABLED=${AUTHENTIK_ENABLED:-true}
+        - VITE_CAP_SITE_KEY=${CAP_SITE_KEY}
     container_name: ophthalmoguide_frontend
     ports:
       - "80:80"
@@ -15,6 +16,7 @@ services:
       PUBLIC_HOST: ${PUBLIC_HOST}
       TLS_MODE: ${TLS_MODE:-internal}
       ACME_EMAIL: ${ACME_EMAIL:-}
+      CAP_SITE_KEY: ${CAP_SITE_KEY}
     volumes:
       - angie_acme_data:/var/lib/angie/acme
       - angie_certs_data:/var/lib/angie/certs
@@ -35,7 +37,9 @@ services:
       Ollama__Url: "http://ollama:11434"
       Ollama__Model: "qwen3.5:4b-q4_K_M"
       Bot__ApiKey: "${BOT_API_KEY}"
-      Altcha__Secret: "${ALTCHA_SECRET}"
+      Cap__Secret: "${CAP_SECRET_KEY}"
+      Cap__SiteKey: "${CAP_SITE_KEY}"
+      Cap__BaseUrl: "http://cap:3000"
       Prometheus__Port: "8081"
       Authentik__Enabled: "${AUTHENTIK_ENABLED:-true}"
       Authentik__Authority: "http://authentik-server:9000/application/o/ophthalmoguide/"
@@ -62,6 +66,21 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    restart: unless-stopped
+
+  cap:
+    image: tiago2/cap:latest
+    container_name: ophthalmoguide_cap
+    expose:
+      - "3000"
+    environment:
+      ADMIN_KEY: "${CAP_ADMIN_KEY}"
+      REDIS_URL: "redis://valkey:6379/1"
+      TRUST_PROXY: "true"
+      RATELIMIT_IP_HEADER: "x-forwarded-for"
+    depends_on:
+      valkey:
+        condition: service_healthy
     restart: unless-stopped
 
   bot-workerservice:

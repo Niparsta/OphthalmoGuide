@@ -2,6 +2,7 @@ using Backend;
 using Backend.Models;
 using Backend.Services;
 using Backend.Data;
+using System.Net.Http.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Builder;
 using OpenTelemetry;
@@ -82,9 +83,10 @@ builder.Services.AddTransient<OllamaQueueBroker>();
 builder.Services.AddSingleton(sp => 
 {
     var config = sp.GetRequiredService<IConfiguration>();
-    var secret = config["Altcha:Secret"] ?? "default_altcha_secret_key_12345";
-    return new backend.Services.AltchaService(secret);
+    var secret = config["Cap:Secret"] ?? "default_cap_secret_key_12345";
+    return new backend.Services.CapService(secret);
 });
+
 
 // Configure CAP (DotNet Core CAP) using EntityFramework for Storage and Valkey/Redis Streams for Transport
 builder.Services.AddCap(options =>
@@ -468,18 +470,18 @@ app.MapGet("/api/admin/session", () => Results.Ok(new { authenticated = true }))
 .WithName("ValidateAdminSession")
 .RequireAuthorization("AdminOnly");
 
-app.MapGet("/api/altcha/challenge", (backend.Services.AltchaService altchaService) =>
+app.MapGet("/api/cap/challenge", (backend.Services.CapService capService) =>
 {
-    var challenge = altchaService.GenerateChallenge(50000);
+    var challenge = capService.GenerateChallenge(50000);
     return Results.Ok(challenge);
 })
 .AllowAnonymous()
-.WithName("GetAltchaChallenge");
+.WithName("GetCapChallenge");
 
-app.MapPost("/api/analyze", async (HttpContext context, AnalyzeRequest request, OllamaQueueBroker broker, OphthalmologyService service, backend.Services.AltchaService altchaService, IConfiguration config, CancellationToken cancellationToken) =>
+app.MapPost("/api/analyze", async (HttpContext context, AnalyzeRequest request, OllamaQueueBroker broker, OphthalmologyService service, backend.Services.CapService capService, IConfiguration config, CancellationToken cancellationToken) =>
 {
-    var altchaCheck = await VerifyAltchaAsync(context, config, altchaService);
-    if (altchaCheck != null) return altchaCheck;
+    var capCheck = await VerifyCapAsync(context, config, capService);
+    if (capCheck != null) return capCheck;
 
     if (string.IsNullOrWhiteSpace(request.Text))
     {
@@ -545,10 +547,10 @@ static IResult BuildPdfFileResult(byte[] pdfBytes)
     return Results.File(pdfBytes, "application/pdf", PdfExportService.GetFileName(reportTime));
 }
 
-app.MapGet("/api/report/pdf", async (HttpContext context, string? id, AppDbContext dbContext, PdfExportService pdfService, backend.Services.AltchaService altchaService, IConfiguration config) =>
+app.MapGet("/api/report/pdf", async (HttpContext context, string? id, AppDbContext dbContext, PdfExportService pdfService, backend.Services.CapService capService, IConfiguration config) =>
 {
-    var altchaCheck = await VerifyAltchaAsync(context, config, altchaService);
-    if (altchaCheck != null) return altchaCheck;
+    var capCheck = await VerifyCapAsync(context, config, capService);
+    if (capCheck != null) return capCheck;
 
     try
     {
@@ -596,10 +598,10 @@ app.MapGet("/api/report/pdf", async (HttpContext context, string? id, AppDbConte
 .WithName("ExportPdfReport");
 
 
-app.MapGet("/api/history", async (HttpContext context, OphthalmologyService service, backend.Services.AltchaService altchaService, IConfiguration config) =>
+app.MapGet("/api/history", async (HttpContext context, OphthalmologyService service, backend.Services.CapService capService, IConfiguration config) =>
 {
-    var altchaCheck = await VerifyAltchaAsync(context, config, altchaService);
-    if (altchaCheck != null) return altchaCheck;
+    var capCheck = await VerifyCapAsync(context, config, capService);
+    if (capCheck != null) return capCheck;
 
     var sessionId = context.Request.Headers["Session-Id"].ToString();
     if (string.IsNullOrWhiteSpace(sessionId)) return Results.BadRequest("Session-Id header is required.");
@@ -664,10 +666,10 @@ app.MapDelete("/api/admin/history/bulk", async ([Microsoft.AspNetCore.Mvc.FromBo
 .RequireAuthorization("AdminOnly");
 
 // SaluteSpeech API: Распознавание речи (STT)
-app.MapPost("/api/speech/recognize", async (HttpContext context, SaluteSpeechService speechService, ILogger<Program> logger, backend.Services.AltchaService altchaService, IConfiguration config) =>
+app.MapPost("/api/speech/recognize", async (HttpContext context, SaluteSpeechService speechService, ILogger<Program> logger, backend.Services.CapService capService, IConfiguration config) =>
 {
-    var altchaCheck = await VerifyAltchaAsync(context, config, altchaService);
-    if (altchaCheck != null) return altchaCheck;
+    var capCheck = await VerifyCapAsync(context, config, capService);
+    if (capCheck != null) return capCheck;
 
     try
     {
@@ -798,10 +800,10 @@ static bool HasAscii(byte[] bytes, int offset, string value)
 }
 
 // SaluteSpeech API: Синтез речи (TTS)
-app.MapPost("/api/speech/synthesize", async (HttpContext context, ILogger<Program> logger, backend.Services.AltchaService altchaService, IConfiguration config) =>
+app.MapPost("/api/speech/synthesize", async (HttpContext context, ILogger<Program> logger, backend.Services.CapService capService, IConfiguration config) =>
 {
-    var altchaCheck = await VerifyAltchaAsync(context, config, altchaService);
-    if (altchaCheck != null) return altchaCheck;
+    var capCheck = await VerifyCapAsync(context, config, capService);
+    if (capCheck != null) return capCheck;
 
     try
     {
@@ -946,7 +948,7 @@ static void LoadDotEnv(string path)
     }
 }
 
-static async Task<IResult?> VerifyAltchaAsync(HttpContext context, IConfiguration config, backend.Services.AltchaService altchaService)
+static async Task<IResult?> VerifyCapAsync(HttpContext context, IConfiguration config, backend.Services.CapService capService)
 {
     var botKey = context.Request.Headers["X-Bot-Api-Key"].ToString();
     var configuredBotKey = config["Bot:ApiKey"] ?? "default_bot_api_key_abc123";
@@ -969,15 +971,15 @@ static async Task<IResult?> VerifyAltchaAsync(HttpContext context, IConfiguratio
 
     var redis = context.RequestServices.GetService<StackExchange.Redis.IConnectionMultiplexer>();
 
-    // 1. Check if we have a valid session verification token (Altcha signature) in headers
-    var altchaToken = context.Request.Headers["X-Altcha-Token"].ToString();
-    if (!string.IsNullOrWhiteSpace(altchaToken) && !string.IsNullOrWhiteSpace(sessionId) && redis != null && redis.IsConnected)
+    // 1. Check if we have a valid session verification token (Cap signature) in headers
+    var capToken = context.Request.Headers["X-Cap-Token"].ToString();
+    if (!string.IsNullOrWhiteSpace(capToken) && !string.IsNullOrWhiteSpace(sessionId) && redis != null && redis.IsConnected)
     {
-        var db = redis.GetDatabase();
+        var db = redis.GetDatabase(1);
         var verifiedKey = $"session:verified:{sessionId}";
         var savedSignature = await db.StringGetAsync(verifiedKey);
 
-        if (savedSignature.HasValue && string.Equals(savedSignature.ToString(), altchaToken, StringComparison.OrdinalIgnoreCase))
+        if (savedSignature.HasValue && string.Equals(savedSignature.ToString(), capToken, StringComparison.OrdinalIgnoreCase))
         {
             // Session is verified. Check session rate limits to prevent abuse (max 15 requests per 10 seconds)
             var unixTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -993,58 +995,68 @@ static async Task<IResult?> VerifyAltchaAsync(HttpContext context, IConfiguratio
             {
                 // Revoke trust due to rate limit abuse
                 await db.KeyDeleteAsync(verifiedKey);
-                return Results.Json(new { error = "Altcha verification required due to rate limit", code = "altcha_required" }, statusCode: 400);
+                return Results.Json(new { error = "Cap verification required due to rate limit", code = "cap_required" }, statusCode: 400);
             }
 
-            return null; // Bypass full Altcha challenge resolution check
+            return null; // Bypass full Cap challenge resolution check
         }
     }
 
-    // 2. Fallback: Full verification of X-Altcha-Payload
-    var altchaPayloadBase64 = context.Request.Headers["X-Altcha-Payload"].ToString();
-    if (string.IsNullOrWhiteSpace(altchaPayloadBase64))
+    // 2. Fallback: Full verification of X-Cap-Payload
+    var capPayloadToken = context.Request.Headers["X-Cap-Payload"].ToString();
+    if (string.IsNullOrWhiteSpace(capPayloadToken))
     {
-        altchaPayloadBase64 = context.Request.Query["altchaPayload"].ToString();
+        capPayloadToken = context.Request.Query["capPayload"].ToString();
     }
 
-    if (string.IsNullOrWhiteSpace(altchaPayloadBase64))
+    if (string.IsNullOrWhiteSpace(capPayloadToken))
     {
-        return Results.Json(new { error = "Altcha verification required", code = "altcha_required" }, statusCode: 400);
+        return Results.Json(new { error = "Cap verification required", code = "cap_required" }, statusCode: 400);
     }
 
     try
     {
-        var jsonBytes = Convert.FromBase64String(altchaPayloadBase64);
-        var json = System.Text.Encoding.UTF8.GetString(jsonBytes);
-        var payload = JsonSerializer.Deserialize<backend.Services.AltchaPayload>(json);
-        if (payload == null || !altchaService.VerifyPayload(payload))
+        var clientFactory = context.RequestServices.GetRequiredService<IHttpClientFactory>();
+        using var client = clientFactory.CreateClient();
+
+        var secret = config["Cap:Secret"] ?? "change_me_cap_secret_key_789abc";
+        var siteKey = config["Cap:SiteKey"] ?? "f31d5d6959";
+        var baseUrl = config["Cap:BaseUrl"] ?? "http://cap:3000";
+
+        var verificationUrl = $"{baseUrl.TrimEnd('/')}/{siteKey}/siteverify";
+
+        var verifyRequest = new { secret = secret, response = capPayloadToken };
+        using var response = await client.PostAsJsonAsync(verificationUrl, verifyRequest);
+
+        if (!response.IsSuccessStatusCode)
         {
-            return Results.Json(new { error = "Altcha verification failed", code = "altcha_failed" }, statusCode: 400);
+            return Results.Json(new { error = "Cap verification failed", code = "cap_failed" }, statusCode: 400);
         }
 
-        // Replay Attack Protection: Ensure this challenge payload has not been used yet.
-        if (redis != null && redis.IsConnected)
+        var result = await response.Content.ReadFromJsonAsync<CapVerificationResult>();
+        if (result == null || !result.success)
         {
-            var db = redis.GetDatabase();
-            var replayKey = $"altcha:used:{payload.challenge}";
-            var isNew = await db.StringSetAsync(replayKey, "1", TimeSpan.FromMinutes(15), StackExchange.Redis.When.NotExists);
-            if (!isNew)
-            {
-                return Results.Json(new { error = "Altcha verification failed: token already used", code = "altcha_used" }, statusCode: 400);
-            }
+            return Results.Json(new { error = "Cap verification failed", code = "cap_failed" }, statusCode: 400);
+        }
 
-            // Write the trusted session verification key with the signature as the value
-            if (!string.IsNullOrWhiteSpace(sessionId))
-            {
-                var verifiedKey = $"session:verified:{sessionId}";
-                await db.StringSetAsync(verifiedKey, payload.signature, TimeSpan.FromMinutes(15));
-            }
+        // Replay Attack Protection is handled by Cap Standalone server itself.
+        // We write the trusted session verification token to Redis to avoid re-verification for 15 minutes.
+        if (redis != null && redis.IsConnected && !string.IsNullOrWhiteSpace(sessionId))
+        {
+            var db = redis.GetDatabase(1);
+            var verifiedKey = $"session:verified:{sessionId}";
+            await db.StringSetAsync(verifiedKey, capPayloadToken, TimeSpan.FromMinutes(15));
         }
     }
-    catch
+    catch (Exception ex)
     {
-        return Results.Json(new { error = "Altcha verification invalid format", code = "altcha_invalid" }, statusCode: 400);
+        return Results.Json(new { error = $"Cap verification failed: {ex.Message}", code = "cap_failed" }, statusCode: 400);
     }
 
     return null;
+}
+
+public class CapVerificationResult
+{
+    public bool success { get; set; }
 }
