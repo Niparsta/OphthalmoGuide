@@ -13,6 +13,90 @@ import unauthorizedHtml from '../public/401.html?raw'
 import { createConnectivityMonitor, type ConnectivityMonitor } from './connectivityMonitor'
 import './App.css'
 
+// --- Altcha CAPTCHA system ---
+interface AltchaChallenge {
+  algorithm: string
+  challenge: string
+  salt: string
+  signature: string
+  maxnumber: number
+}
+
+interface AltchaPayload {
+  algorithm: string
+  challenge: string
+  salt: string
+  signature: string
+  number: number
+}
+
+let activeAltchaToken: string | null = sessionStorage.getItem('og_altcha_token')
+let altchaTokenExpiresAt = parseInt(sessionStorage.getItem('og_altcha_token_expires') || '0', 10)
+
+function clearAltchaCache() {
+  activeAltchaToken = null
+  altchaTokenExpiresAt = 0
+  sessionStorage.removeItem('og_altcha_token')
+  sessionStorage.removeItem('og_altcha_token_expires')
+}
+
+async function solveAltcha(challengeObj: AltchaChallenge): Promise<AltchaPayload> {
+  const { challenge, salt, maxnumber } = challengeObj
+  const max = maxnumber || 50000
+  for (let number = 0; number <= max; number++) {
+    const input = salt + number.toString()
+    const msgBuffer = new TextEncoder().encode(input)
+    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer)
+    const hashArray = Array.from(new Uint8Array(hashBuffer))
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+    if (hashHex === challenge) {
+      return {
+        algorithm: challengeObj.algorithm,
+        challenge,
+        salt,
+        signature: challengeObj.signature,
+        number
+      }
+    }
+  }
+  throw new Error('Altcha challenge could not be solved')
+}
+
+async function injectAltchaHeaders(headers: Record<string, string>, endpoint: string): Promise<void> {
+  const now = Date.now()
+  if (activeAltchaToken && now < altchaTokenExpiresAt - 60000) {
+    headers['X-Altcha-Token'] = activeAltchaToken
+    return
+  }
+
+  try {
+    const res = await fetch(`${API_BASE}/api/altcha/challenge`)
+    if (!res.ok) throw new Error('Failed to fetch challenge')
+    const challenge: AltchaChallenge = await res.json()
+    const solution = await solveAltcha(challenge)
+    
+    let expiresAt = now + 15 * 60 * 1000
+    const parts = challenge.salt.split('?expires=')
+    const expiresPart = parts[1]
+    if (parts.length === 2 && expiresPart) {
+      const expiresSec = parseInt(expiresPart, 10)
+      expiresAt = expiresSec * 1000
+    }
+
+    activeAltchaToken = solution.signature
+    altchaTokenExpiresAt = expiresAt
+    sessionStorage.setItem('og_altcha_token', solution.signature)
+    sessionStorage.setItem('og_altcha_token_expires', String(expiresAt))
+
+    const jsonStr = JSON.stringify(solution)
+    const base64 = btoa(unescape(encodeURIComponent(jsonStr)))
+    headers['X-Altcha-Payload'] = base64
+  } catch (err) {
+    console.error('Altcha solver error:', err)
+    throw err
+  }
+}
+
 const isDark = ref(false)
 let mediaQuery: MediaQueryList | null = null
 
@@ -903,6 +987,19 @@ async function apiFetch(endpoint: string, options: Omit<RequestInit, 'body'> & {
     ...(options.headers as Record<string, string> || {})
   }
 
+  const heavyEndpoints = ['/api/analyze', '/api/speech/recognize', '/api/speech/synthesize', '/api/history']
+  if (heavyEndpoints.includes(endpoint)) {
+    try {
+      await injectAltchaHeaders(headers, endpoint)
+    } catch (err) {
+      console.error('Failed to inject Altcha headers:', err)
+      if (endpoint !== '/api/history') {
+        showNotification('Не удалось запустить проверку безопасности. Проверьте соединение с сервером.', 'error')
+      }
+      throw new Error('altcha_solve_failed')
+    }
+  }
+
   let fetchBody: any = options.body
   if (fetchBody && !(fetchBody instanceof Blob) && !(fetchBody instanceof FormData) && typeof fetchBody === 'object') {
     fetchBody = JSON.stringify(fetchBody)
@@ -918,6 +1015,22 @@ async function apiFetch(endpoint: string, options: Omit<RequestInit, 'body'> & {
 
   let response = await doFetch()
 
+  // Transparent self-healing / auto-retry: if the 15-minute session expired or was revoked for rate limits,
+  // clear local cache, generate a fresh challenge solution, and retry the request.
+  if (response.status === 400 && heavyEndpoints.includes(endpoint)) {
+    try {
+      const errJson = await response.clone().json()
+      if (errJson && (errJson.code === 'altcha_failed' || errJson.code === 'altcha_required' || errJson.code === 'altcha_invalid' || errJson.code === 'altcha_used')) {
+        clearAltchaCache()
+        delete headers['X-Altcha-Token']
+        await injectAltchaHeaders(headers, endpoint)
+        response = await doFetch()
+      }
+    } catch (err) {
+      console.error('Altcha auto-retry failed:', err)
+    }
+  }
+
   if (response.status === 401 && useAdminCredentials) {
     const refreshed = await refreshAdminToken()
     if (refreshed) {
@@ -926,6 +1039,15 @@ async function apiFetch(endpoint: string, options: Omit<RequestInit, 'body'> & {
   }
 
   if (!response.ok) {
+    if (response.status === 400) {
+      try {
+        const errJson = await response.clone().json()
+        if (errJson && (errJson.code === 'altcha_failed' || errJson.code === 'altcha_required' || errJson.code === 'altcha_invalid' || errJson.code === 'altcha_used')) {
+          clearAltchaCache()
+          showNotification('Не удалось пройти фоновую проверку безопасности (защита от спама). Пожалуйста, повторите попытку.', 'error')
+        }
+      } catch {}
+    }
     if (response.status === 401 && (isAdmin.value || isAdminPath())) {
       void showUnauthorizedPage()
     } else if (response.status === 403 && (isAdmin.value || isAdminPath())) {
@@ -1084,7 +1206,7 @@ async function analyzeComplaint() {
       })
     }
   } catch (err: any) {
-    if (err?.name === 'AbortError') {
+    if (err?.name === 'AbortError' || err?.message === 'altcha_solve_failed') {
       return
     }
     showSafeError('Ошибка при анализе жалоб, попробуйте ещё раз')
@@ -1324,16 +1446,14 @@ function writeString(view: DataView, offset: number, string: string) {
 async function sendVoiceBlobToSTT(blob: Blob) {
   speechRecognizing.value = true
   try {
-    const res = await fetch(`${API_BASE}/api/speech/recognize`, {
+    const res = await apiFetch('/api/speech/recognize', {
       method: 'POST',
       headers: {
-        'Content-Type': blob.type,
-        'Session-Id': sessionId.value
+        'Content-Type': blob.type
       },
       body: blob
     })
     
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
     
     if (data.success && data.text) {
@@ -1346,7 +1466,10 @@ async function sendVoiceBlobToSTT(blob: Blob) {
     } else {
       showNotification('Голос не распознан – запишите сообщение ещё раз', 'warning')
     }
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.message === 'altcha_solve_failed') {
+      return
+    }
     showSafeError('Не удалось распознать речь, проверьте микрофон')
   } finally {
     speechRecognizing.value = false
@@ -1418,9 +1541,12 @@ async function playTtsVoice() {
       isSynthesizing.value = false
     }
     await audioElement.value.play()
-  } catch (err) {
-    showSafeError('Не удалось воспроизвести голосовое сообщение')
+  } catch (err: any) {
     isSynthesizing.value = false
+    if (err?.message === 'altcha_solve_failed') {
+      return
+    }
+    showSafeError('Не удалось воспроизвести голосовое сообщение')
   }
 }
 
@@ -1484,14 +1610,47 @@ async function fetchPdfBlob(
     'Session-Id': options.recordSessionId || sessionId.value
   }
 
+  try {
+    await injectAltchaHeaders(headers, '/api/report/pdf')
+  } catch (err) {
+    console.error('Failed to obtain Altcha payload for PDF download:', err)
+    showNotification('Не удалось запустить проверку безопасности для скачивания PDF.', 'error')
+    throw new Error('altcha_solve_failed')
+  }
+
   let url = `${API_BASE}/api/report/pdf`
   const targetId = options.recordId || loadedRecordId.value
   if (targetId) {
     url += `?id=${encodeURIComponent(targetId)}`
   }
 
-  const response = await fetch(url, { method: 'GET', headers })
+  let response = await fetch(url, { method: 'GET', headers })
   if (!response.ok) {
+    if (response.status === 400) {
+      try {
+        const errJson = await response.clone().json()
+        if (errJson && (errJson.code === 'altcha_failed' || errJson.code === 'altcha_required' || errJson.code === 'altcha_invalid' || errJson.code === 'altcha_used')) {
+          clearAltchaCache()
+          delete headers['X-Altcha-Token']
+          await injectAltchaHeaders(headers, '/api/report/pdf')
+          response = await fetch(url, { method: 'GET', headers })
+        }
+      } catch (err) {
+        console.error('Altcha PDF auto-retry failed:', err)
+      }
+    }
+  }
+
+  if (!response.ok) {
+    if (response.status === 400) {
+      try {
+        const errJson = await response.clone().json()
+        if (errJson && (errJson.code === 'altcha_failed' || errJson.code === 'altcha_required' || errJson.code === 'altcha_invalid' || errJson.code === 'altcha_used')) {
+          clearAltchaCache()
+          showNotification('Не удалось пройти фоновую проверку безопасности (защита от спама). Пожалуйста, повторите попытку.', 'error')
+        }
+      } catch {}
+    }
     await response.text()
     throw new Error('pdf_request_failed')
   }
@@ -2311,6 +2470,14 @@ onUnmounted(() => {
                 </span>
                 <span v-else>Начать диагностику</span>
               </button>
+              
+              <div class="altcha-protection-badge">
+                <svg class="altcha-badge-icon" viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.5" fill="none">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+                <span>Защищено <a href="https://altcha.org" target="_blank" rel="noopener">ALTCHA</a></span>
+              </div>
             </div>
           </div>
 

@@ -7,8 +7,12 @@ using Prometheus;
 
 var builder = Host.CreateApplicationBuilder(args);
 
-// Регистрация HttpClient для вызовов API бэкенда
-builder.Services.AddHttpClient();
+// Регистрация HttpClient для вызовов API бэкенда с API-ключом авторизации ботов для обхода Altcha
+builder.Services.AddHttpClient(string.Empty, client =>
+{
+    var apiKey = builder.Configuration["Bot:ApiKey"] ?? "default_bot_api_key_abc123";
+    client.DefaultRequestHeaders.Add("X-Bot-Api-Key", apiKey);
+});
 
 // Подключение к Valkey/Redis
 builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
@@ -17,6 +21,9 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
     var connStr = config["Redis:ConnectionString"] ?? "localhost:6379,abortConnect=false";
     return ConnectionMultiplexer.Connect(connStr);
 });
+
+// Регистрация лимитера запросов ботов
+builder.Services.AddSingleton<BotRateLimiter>();
 
 // Регистрация фоновых сервисов ботов
 builder.Services.AddHostedService<TelegramBotService>();

@@ -45,16 +45,20 @@ namespace bot_workerservice.Services
 
         private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
+        private readonly BotRateLimiter _rateLimiter;
+
         public TelegramBotService(
             ILogger<TelegramBotService> logger,
             IConfiguration configuration,
             IHttpClientFactory httpClientFactory,
-            IConnectionMultiplexer redis)
+            IConnectionMultiplexer redis,
+            BotRateLimiter rateLimiter)
         {
             _logger = logger;
             _configuration = configuration;
             _httpClientFactory = httpClientFactory;
             _redis = redis;
+            _rateLimiter = rateLimiter;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -100,6 +104,11 @@ namespace bot_workerservice.Services
                 if (userId == null) return;
                 if (_restrictAccess && !_allowedUserIds.Contains(userId.Value)) return;
 
+                if (await ProcessRateLimitAsync(bot, update, ct))
+                {
+                    return;
+                }
+
                 if (update.CallbackQuery is { } cb) await OnCallbackAsync(bot, cb, ct);
                 else if (update.Message is { } msg) await OnMessageAsync(bot, msg, ct);
             }
@@ -107,6 +116,98 @@ namespace bot_workerservice.Services
             {
                 _logger.LogError(ex, "[TG] Error handling update {Id}", update.Id);
             }
+        }
+
+        private async Task<bool> ProcessRateLimitAsync(ITelegramBotClient bot, Update update, CancellationToken ct)
+        {
+            var userId = update.Message?.From?.Id ?? update.CallbackQuery?.From?.Id;
+            if (userId == null) return false;
+
+            var chatId = update.Message?.Chat?.Id ?? update.CallbackQuery?.Message?.Chat?.Id;
+            if (chatId == null) return false;
+
+            bool isBlocked = await _rateLimiter.IsBlockedAsync("tg", userId.Value);
+
+            if (isBlocked)
+            {
+                if (update.CallbackQuery is { } cb && cb.Data != null && cb.Data.StartsWith("rl:"))
+                {
+                    var clickedEmoji = cb.Data.Substring(3);
+                    var expectedEmoji = await _rateLimiter.GetExpectedEmojiAsync("tg", userId.Value);
+                    
+                    if (clickedEmoji == expectedEmoji)
+                    {
+                        await _rateLimiter.UnblockAsync("tg", userId.Value);
+                        await bot.AnswerCallbackQueryAsync(cb.Id, "✅ Успешно!", cancellationToken: ct);
+                        
+                        if (cb.Message != null)
+                        {
+                            try { await bot.DeleteMessageAsync(chatId.Value, cb.Message.MessageId, ct); } catch {}
+                        }
+                        
+                        await bot.SendTextMessageAsync(chatId.Value, 
+                            "✅ Проверка пройдена! Блокировка снята. Вы можете продолжить пользоваться ботом.", 
+                            cancellationToken: ct);
+                    }
+                    else
+                    {
+                        await bot.AnswerCallbackQueryAsync(cb.Id, "❌ Неверно!", cancellationToken: ct);
+                        var challenge = await _rateLimiter.GenerateChallengeAsync("tg", userId.Value);
+                        
+                        var inlineKeyboard = new InlineKeyboardMarkup(
+                            challenge.Options.Select(opt => InlineKeyboardButton.WithCallbackData(opt, $"rl:{opt}")).ToArray()
+                        );
+
+                        if (cb.Message != null)
+                        {
+                            try
+                            {
+                                await bot.EditMessageTextAsync(chatId.Value, cb.Message.MessageId,
+                                    $"❌ Неверно! Попробуйте еще раз.\n\n⚠️ Вы отправляете сообщения слишком часто. Подтвердите, что вы человек.\nНажмите на кнопку с эмодзи: {challenge.TargetName}",
+                                    replyMarkup: inlineKeyboard,
+                                    cancellationToken: ct);
+                            }
+                            catch
+                            {
+                                await bot.SendTextMessageAsync(chatId.Value,
+                                    $"❌ Неверно! Попробуйте еще раз.\n\n⚠️ Вы отправляете сообщения слишком часто. Подтвердите, что вы человек.\nНажмите на кнопку с эмодзи: {challenge.TargetName}",
+                                    replyMarkup: inlineKeyboard,
+                                    cancellationToken: ct);
+                            }
+                        }
+                    }
+                    return true;
+                }
+
+                if (update.Message is { } msg)
+                {
+                    await bot.SendTextMessageAsync(chatId.Value, 
+                        "⚠️ Вы временно заблокированы за слишком частые сообщения. Пожалуйста, пройдите проверку выше, выбрав правильный эмодзи.", 
+                        cancellationToken: ct);
+                }
+                return true;
+            }
+
+            if (update.Message != null)
+            {
+                bool limitExceeded = await _rateLimiter.IncrementAndCheckLimitAsync("tg", userId.Value);
+                if (limitExceeded)
+                {
+                    var challenge = await _rateLimiter.GenerateChallengeAsync("tg", userId.Value);
+                    var inlineKeyboard = new InlineKeyboardMarkup(
+                        challenge.Options.Select(opt => InlineKeyboardButton.WithCallbackData(opt, $"rl:{opt}")).ToArray()
+                    );
+
+                    await bot.SendTextMessageAsync(chatId.Value,
+                        $"⚠️ Вы отправляете сообщения слишком часто! Для продолжения подтвердите, что вы человек.\n\nНажмите на кнопку с эмодзи: {challenge.TargetName}",
+                        replyMarkup: inlineKeyboard,
+                        cancellationToken: ct);
+
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         // ──────────── Сообщения ────────────

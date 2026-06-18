@@ -79,6 +79,12 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
 builder.Services.AddScoped<OphthalmologyService>();
 builder.Services.AddSingleton<PdfExportService>();
 builder.Services.AddTransient<OllamaQueueBroker>();
+builder.Services.AddSingleton(sp => 
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var secret = config["Altcha:Secret"] ?? "default_altcha_secret_key_12345";
+    return new backend.Services.AltchaService(secret);
+});
 
 // Configure CAP (DotNet Core CAP) using EntityFramework for Storage and Valkey/Redis Streams for Transport
 builder.Services.AddCap(options =>
@@ -462,8 +468,19 @@ app.MapGet("/api/admin/session", () => Results.Ok(new { authenticated = true }))
 .WithName("ValidateAdminSession")
 .RequireAuthorization("AdminOnly");
 
-app.MapPost("/api/analyze", async (HttpContext context, AnalyzeRequest request, OllamaQueueBroker broker, OphthalmologyService service, CancellationToken cancellationToken) =>
+app.MapGet("/api/altcha/challenge", (backend.Services.AltchaService altchaService) =>
 {
+    var challenge = altchaService.GenerateChallenge(50000);
+    return Results.Ok(challenge);
+})
+.AllowAnonymous()
+.WithName("GetAltchaChallenge");
+
+app.MapPost("/api/analyze", async (HttpContext context, AnalyzeRequest request, OllamaQueueBroker broker, OphthalmologyService service, backend.Services.AltchaService altchaService, IConfiguration config, CancellationToken cancellationToken) =>
+{
+    var altchaCheck = await VerifyAltchaAsync(context, config, altchaService);
+    if (altchaCheck != null) return altchaCheck;
+
     if (string.IsNullOrWhiteSpace(request.Text))
     {
         return Results.BadRequest(new AnalyzeResponse
@@ -528,8 +545,11 @@ static IResult BuildPdfFileResult(byte[] pdfBytes)
     return Results.File(pdfBytes, "application/pdf", PdfExportService.GetFileName(reportTime));
 }
 
-app.MapGet("/api/report/pdf", async (HttpContext context, string? id, AppDbContext dbContext, PdfExportService pdfService) =>
+app.MapGet("/api/report/pdf", async (HttpContext context, string? id, AppDbContext dbContext, PdfExportService pdfService, backend.Services.AltchaService altchaService, IConfiguration config) =>
 {
+    var altchaCheck = await VerifyAltchaAsync(context, config, altchaService);
+    if (altchaCheck != null) return altchaCheck;
+
     try
     {
         var sessionId = context.Request.Headers["Session-Id"].ToString();
@@ -576,8 +596,11 @@ app.MapGet("/api/report/pdf", async (HttpContext context, string? id, AppDbConte
 .WithName("ExportPdfReport");
 
 
-app.MapGet("/api/history", async (HttpContext context, OphthalmologyService service) =>
+app.MapGet("/api/history", async (HttpContext context, OphthalmologyService service, backend.Services.AltchaService altchaService, IConfiguration config) =>
 {
+    var altchaCheck = await VerifyAltchaAsync(context, config, altchaService);
+    if (altchaCheck != null) return altchaCheck;
+
     var sessionId = context.Request.Headers["Session-Id"].ToString();
     if (string.IsNullOrWhiteSpace(sessionId)) return Results.BadRequest("Session-Id header is required.");
     try
@@ -641,8 +664,11 @@ app.MapDelete("/api/admin/history/bulk", async ([Microsoft.AspNetCore.Mvc.FromBo
 .RequireAuthorization("AdminOnly");
 
 // SaluteSpeech API: Распознавание речи (STT)
-app.MapPost("/api/speech/recognize", async (HttpContext context, SaluteSpeechService speechService, ILogger<Program> logger) =>
+app.MapPost("/api/speech/recognize", async (HttpContext context, SaluteSpeechService speechService, ILogger<Program> logger, backend.Services.AltchaService altchaService, IConfiguration config) =>
 {
+    var altchaCheck = await VerifyAltchaAsync(context, config, altchaService);
+    if (altchaCheck != null) return altchaCheck;
+
     try
     {
         using var ms = new MemoryStream();
@@ -772,8 +798,11 @@ static bool HasAscii(byte[] bytes, int offset, string value)
 }
 
 // SaluteSpeech API: Синтез речи (TTS)
-app.MapPost("/api/speech/synthesize", async (HttpContext context, ILogger<Program> logger) =>
+app.MapPost("/api/speech/synthesize", async (HttpContext context, ILogger<Program> logger, backend.Services.AltchaService altchaService, IConfiguration config) =>
 {
+    var altchaCheck = await VerifyAltchaAsync(context, config, altchaService);
+    if (altchaCheck != null) return altchaCheck;
+
     try
     {
         var speechService = context.RequestServices.GetRequiredService<SaluteSpeechService>();
@@ -915,4 +944,107 @@ static void LoadDotEnv(string path)
             Environment.SetEnvironmentVariable(key, value);
         }
     }
+}
+
+static async Task<IResult?> VerifyAltchaAsync(HttpContext context, IConfiguration config, backend.Services.AltchaService altchaService)
+{
+    var botKey = context.Request.Headers["X-Bot-Api-Key"].ToString();
+    var configuredBotKey = config["Bot:ApiKey"] ?? "default_bot_api_key_abc123";
+    if (!string.IsNullOrEmpty(botKey) && botKey == configuredBotKey)
+    {
+        return null;
+    }
+
+    var remoteIp = context.Connection.RemoteIpAddress;
+    if (remoteIp != null && System.Net.IPAddress.IsLoopback(remoteIp))
+    {
+        return null;
+    }
+
+    var sessionId = context.Request.Headers["Session-Id"].ToString();
+    if (string.IsNullOrWhiteSpace(sessionId))
+    {
+        sessionId = context.Request.Query["sessionId"].ToString();
+    }
+
+    var redis = context.RequestServices.GetService<StackExchange.Redis.IConnectionMultiplexer>();
+
+    // 1. Check if we have a valid session verification token (Altcha signature) in headers
+    var altchaToken = context.Request.Headers["X-Altcha-Token"].ToString();
+    if (!string.IsNullOrWhiteSpace(altchaToken) && !string.IsNullOrWhiteSpace(sessionId) && redis != null && redis.IsConnected)
+    {
+        var db = redis.GetDatabase();
+        var verifiedKey = $"session:verified:{sessionId}";
+        var savedSignature = await db.StringGetAsync(verifiedKey);
+
+        if (savedSignature.HasValue && string.Equals(savedSignature.ToString(), altchaToken, StringComparison.OrdinalIgnoreCase))
+        {
+            // Session is verified. Check session rate limits to prevent abuse (max 15 requests per 10 seconds)
+            var unixTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var windowKey = $"session:rate:{sessionId}:{unixTime / 10}";
+
+            var reqCount = await db.StringIncrementAsync(windowKey);
+            if (reqCount == 1)
+            {
+                await db.KeyExpireAsync(windowKey, TimeSpan.FromSeconds(20));
+            }
+
+            if (reqCount > 15)
+            {
+                // Revoke trust due to rate limit abuse
+                await db.KeyDeleteAsync(verifiedKey);
+                return Results.Json(new { error = "Altcha verification required due to rate limit", code = "altcha_required" }, statusCode: 400);
+            }
+
+            return null; // Bypass full Altcha challenge resolution check
+        }
+    }
+
+    // 2. Fallback: Full verification of X-Altcha-Payload
+    var altchaPayloadBase64 = context.Request.Headers["X-Altcha-Payload"].ToString();
+    if (string.IsNullOrWhiteSpace(altchaPayloadBase64))
+    {
+        altchaPayloadBase64 = context.Request.Query["altchaPayload"].ToString();
+    }
+
+    if (string.IsNullOrWhiteSpace(altchaPayloadBase64))
+    {
+        return Results.Json(new { error = "Altcha verification required", code = "altcha_required" }, statusCode: 400);
+    }
+
+    try
+    {
+        var jsonBytes = Convert.FromBase64String(altchaPayloadBase64);
+        var json = System.Text.Encoding.UTF8.GetString(jsonBytes);
+        var payload = JsonSerializer.Deserialize<backend.Services.AltchaPayload>(json);
+        if (payload == null || !altchaService.VerifyPayload(payload))
+        {
+            return Results.Json(new { error = "Altcha verification failed", code = "altcha_failed" }, statusCode: 400);
+        }
+
+        // Replay Attack Protection: Ensure this challenge payload has not been used yet.
+        if (redis != null && redis.IsConnected)
+        {
+            var db = redis.GetDatabase();
+            var replayKey = $"altcha:used:{payload.challenge}";
+            var isNew = await db.StringSetAsync(replayKey, "1", TimeSpan.FromMinutes(15), StackExchange.Redis.When.NotExists);
+            if (!isNew)
+            {
+                return Results.Json(new { error = "Altcha verification failed: token already used", code = "altcha_used" }, statusCode: 400);
+            }
+
+            // Write the trusted session verification key with the signature as the value
+            if (!string.IsNullOrWhiteSpace(sessionId))
+            {
+                var verifiedKey = $"session:verified:{sessionId}";
+                await db.StringSetAsync(verifiedKey, payload.signature, TimeSpan.FromMinutes(15));
+            }
+        }
+    }
+    catch
+    {
+        return Results.Json(new { error = "Altcha verification invalid format", code = "altcha_invalid" }, statusCode: 400);
+    }
+
+    return null;
 }

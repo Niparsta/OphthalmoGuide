@@ -34,6 +34,8 @@ services:
       Redis__ConnectionString: "valkey:6379,abortConnect=false"
       Ollama__Url: "http://ollama:11434"
       Ollama__Model: "qwen3.5:4b-q4_K_M"
+      Bot__ApiKey: "${BOT_API_KEY}"
+      Altcha__Secret: "${ALTCHA_SECRET}"
       Prometheus__Port: "8081"
       Authentik__Enabled: "${AUTHENTIK_ENABLED:-true}"
       Authentik__Authority: "http://authentik-server:9000/application/o/ophthalmoguide/"
@@ -70,6 +72,7 @@ services:
     environment:
       Backend__Url: "http://backend:5190"
       Redis__ConnectionString: "valkey:6379,abortConnect=false"
+      Bot__ApiKey: "${BOT_API_KEY}"
       Telegram__Token: "${TELEGRAM_BOT_TOKEN:-}"
       Telegram__AllowedUserIds: "${TELEGRAM_ALLOWED_USER_IDS:-}"
       Vk__Token: "${VK_BOT_TOKEN:-}"
@@ -318,3 +321,4 @@ volumes:
     name: ophthalmoguide_loki_data
   dbx_data:
     name: ophthalmoguide_dbx_data
+

@@ -44,16 +44,20 @@ namespace bot_workerservice.Services
 
         private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
+        private readonly BotRateLimiter _rateLimiter;
+
         public VkBotService(
             ILogger<VkBotService> logger,
             IConfiguration configuration,
             IHttpClientFactory httpClientFactory,
-            IConnectionMultiplexer redis)
+            IConnectionMultiplexer redis,
+            BotRateLimiter rateLimiter)
         {
             _logger = logger;
             _configuration = configuration;
             _httpClientFactory = httpClientFactory;
             _redis = redis;
+            _rateLimiter = rateLimiter;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -178,6 +182,11 @@ namespace bot_workerservice.Services
 
             try
             {
+                if (await ProcessRateLimitAsync(userId, msg, ct))
+                {
+                    return;
+                }
+
                 var text  = msg.Text?.Trim() ?? "";
                 var db    = _redis.GetDatabase();
                 var stKey = $"bot:vk:state:{userId}";
@@ -653,6 +662,79 @@ namespace bot_workerservice.Services
                     Payload = JsonSerializer.Serialize(new { button = "restart" })
                 }, KeyboardButtonColor.Primary)
                 .Build();
+
+        private async Task<bool> ProcessRateLimitAsync(long userId, Message msg, CancellationToken ct)
+        {
+            if (!string.IsNullOrEmpty(msg.Payload))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(msg.Payload);
+                    if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                        doc.RootElement.TryGetProperty("ratelimit_emoji", out var emojiProp))
+                    {
+                        var clickedEmoji = emojiProp.GetString();
+                        var expectedEmoji = await _rateLimiter.GetExpectedEmojiAsync("vk", userId);
+
+                        if (clickedEmoji == expectedEmoji)
+                        {
+                            await _rateLimiter.UnblockAsync("vk", userId);
+                            await SendAsync(userId, "✅ Проверка пройдена! Блокировка снята. Вы можете продолжить пользоваться ботом.", ClearKeyboard());
+                        }
+                        else
+                        {
+                            var challenge = await _rateLimiter.GenerateChallengeAsync("vk", userId);
+                            var kbBuilder = new KeyboardBuilder();
+                            foreach (var opt in challenge.Options)
+                            {
+                                kbBuilder.AddButton(new MessageKeyboardButtonAction
+                                {
+                                    Type = KeyboardButtonActionType.Text,
+                                    Label = opt,
+                                    Payload = JsonSerializer.Serialize(new { ratelimit_emoji = opt })
+                                }, KeyboardButtonColor.Default);
+                            }
+                            await SendAsync(userId, $"❌ Неверно! Попробуйте еще раз.\n\n⚠️ Вы отправляете сообщения слишком часто! Для продолжения подтвердите, что вы человек.\nНажмите на кнопку с эмодзи: {challenge.TargetName}", kbBuilder.Build());
+                        }
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "[VK] Failed to parse VK rate limit payload");
+                }
+            }
+
+            bool isBlocked = await _rateLimiter.IsBlockedAsync("vk", userId);
+            if (isBlocked)
+            {
+                await SendAsync(userId, "⚠️ Вы временно заблокированы за слишком частые сообщения. Пожалуйста, пройдите проверку выше, выбрав правильный эмодзи на клавиатуре.");
+                return true;
+            }
+
+            if (string.IsNullOrEmpty(msg.Payload))
+            {
+                bool limitExceeded = await _rateLimiter.IncrementAndCheckLimitAsync("vk", userId);
+                if (limitExceeded)
+                {
+                    var challenge = await _rateLimiter.GenerateChallengeAsync("vk", userId);
+                    var kbBuilder = new KeyboardBuilder();
+                    foreach (var opt in challenge.Options)
+                    {
+                        kbBuilder.AddButton(new MessageKeyboardButtonAction
+                        {
+                            Type = KeyboardButtonActionType.Text,
+                            Label = opt,
+                            Payload = JsonSerializer.Serialize(new { ratelimit_emoji = opt })
+                        }, KeyboardButtonColor.Default);
+                    }
+                    await SendAsync(userId, $"⚠️ Вы отправляете сообщения слишком часто! Для продолжения подтвердите, что вы человек.\n\nНажмите на кнопку с эмодзи: {challenge.TargetName}", kbBuilder.Build());
+                    return true;
+                }
+            }
+
+            return false;
+        }
 
         private MessageKeyboard ClearKeyboard() =>
             new KeyboardBuilder().Build();

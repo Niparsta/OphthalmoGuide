@@ -1,4 +1,4 @@
-﻿/* Floating admin entry styles */
+/* Floating admin entry styles */
 .admin-entry-corner {
   position: absolute;
   top: 24px;
@@ -952,7 +952,33 @@ body {
 .submit-action-row {
   margin-top: 0;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.altcha-protection-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  opacity: 0.85;
+  transition: opacity var(--transition-smooth, 0.2s);
+}
+
+.altcha-protection-badge:hover {
+  opacity: 1;
+}
+
+.altcha-protection-badge a {
+  color: inherit;
+  text-decoration: underline;
+  font-weight: 500;
+}
+
+.altcha-protection-badge svg {
+  color: var(--accent);
 }
 
 .btn-primary-submit-diagnostic {
