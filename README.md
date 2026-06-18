@@ -80,11 +80,12 @@
 #### 1. Пользовательские и административные интерфейсы:
 * **Интерфейс пользователя (чат/диагностика):** `https://{PUBLIC_HOST}/`;
 * **Панель администратора:** `https://{PUBLIC_HOST}/admin/` (для входа требуется авторизация через Authentik);
-* **Панель мониторинга (Grafana):** `https://{PUBLIC_HOST}/grafana/` (интегрирована с Authentik через OAuth).
+* **Панель мониторинга (Grafana):** `https://grafana.{PUBLIC_HOST}/` (интегрирована с Authentik через OAuth).
 
 #### 2. Инфраструктура и базы данных:
-* **Панель управления доступом (Authentik):** `https://{PUBLIC_HOST}:9443/`;
-* **Интерфейс управления базами данных (DBX):** `http://{PUBLIC_HOST}:4224/` (доступ к PostgreSQL и Valkey).
+* **Панель управления доступом (Authentik):** `https://auth.{PUBLIC_HOST}/`;
+* **Интерфейс управления базами данных (DBX):** `https://dbx.{PUBLIC_HOST}/` (доступ к PostgreSQL и Valkey);
+* **Панель защиты от спама (CAP):** `https://cap.{PUBLIC_HOST}/`.
 
 ---
 

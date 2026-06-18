@@ -15,6 +15,14 @@ http {
     sendfile        on;
     keepalive_timeout  65;
 
+    # Websocket upgrade mapping for Authentik
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        ''      close;
+    }
+
+
+
     # Rate limit zones
     limit_req_zone $binary_remote_addr zone=og_api:10m rate=15r/s;
     limit_req_zone $binary_remote_addr zone=og_heavy_api:10m rate=10r/s;
@@ -48,7 +56,7 @@ http {
     server {
         listen 80;
         listen [::]:80;
-        server_name __PUBLIC_HOST__;
+        server_name __PUBLIC_HOST__ auth.__PUBLIC_HOST__ dbx.__PUBLIC_HOST__ grafana.__PUBLIC_HOST__ cap.__PUBLIC_HOST__;
 
         location / {
             return 301 https://$host$request_uri;
@@ -58,8 +66,8 @@ http {
 
     server {
         # MARKER_ACME_HTTP_LISTEN
-        listen 443 ssl;
-        listen [::]:443 ssl;
+        listen 443 ssl default_server;
+        listen [::]:443 ssl default_server;
         http2 on;
         server_name __PUBLIC_HOST__;
 
@@ -101,18 +109,7 @@ http {
             proxy_read_timeout 90s;
         }
 
-        location ^~ /cap/ {
-            status_zone angie_cap_dashboard_proxy;
-            proxy_pass http://cap:3000/;
-            proxy_http_version 1.1;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_set_header X-Forwarded-Host $host;
-            proxy_connect_timeout 10s;
-            proxy_read_timeout 60s;
-        }
+
 
         location ^~ /__CAP_SITE_KEY__/ {
             status_zone angie_cap_sitekey_proxy;
@@ -191,25 +188,7 @@ http {
             proxy_set_header X-Forwarded-Host $host;
         }
 
-        location ^~ /grafana {
-            status_zone angie_grafana_proxy;
-            resolver 127.0.0.11 valid=30s;
-            set $grafana_upstream http://grafana:3000;
-            proxy_pass $grafana_upstream;
-            proxy_http_version 1.1;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_set_header X-Forwarded-Host $host;
-            
-            # Rewrite both hosts in the OIDC redirect URL (the target and redirect_uri parameter) to the current requesting host
-            proxy_redirect ~^(https?://)[^:/]+(:9443/application/o/authorize/\?client_id=[^&]+&redirect_uri=https%3A%2F%2F)[^%]+(%2Fgrafana%2Flogin%2Fgeneric_oauth.*)$ $1$host$2$host$3;
-            
-            # Standard redirects (like grafana internal login page or self-redirects)
-            proxy_redirect ~^(https?://)[^:/]+:3000/(.*)$ https://$host/$2;
-            proxy_redirect ~^(https?://)[^:/]+/(.*)$ https://$host/$2;
-        }
+
 
         # Custom OphthalmoGuide themed error pages
         error_page 401 /401.html;
@@ -250,6 +229,148 @@ http {
             limit_req zone=og_static burst=120 nodelay;
             limit_req_status 429;
             try_files $uri $uri/ /index.html;
+        }
+    }
+
+    # Authentik Subdomain Routing
+    server {
+        # MARKER_ACME_HTTP_LISTEN
+        listen 443 ssl;
+        listen [::]:443 ssl;
+        http2 on;
+        server_name auth.__PUBLIC_HOST__;
+
+        include /etc/angie/conf.d/ssl.conf;
+
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305;
+        ssl_prefer_server_ciphers on;
+        ssl_session_cache shared:SSL:10m;
+        ssl_session_timeout 1d;
+        ssl_session_tickets off;
+
+        status_zone angie_authentik_https;
+
+        location / {
+            proxy_pass http://authentik-server:9000;
+            proxy_http_version 1.1;
+            
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host $host;
+            
+            # Websockets
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+
+            proxy_connect_timeout 10s;
+            proxy_read_timeout 60s;
+        }
+    }
+
+    # DBX Subdomain Routing
+    server {
+        # MARKER_ACME_HTTP_LISTEN
+        listen 443 ssl;
+        listen [::]:443 ssl;
+        http2 on;
+        server_name dbx.__PUBLIC_HOST__;
+
+        include /etc/angie/conf.d/ssl.conf;
+
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305;
+        ssl_prefer_server_ciphers on;
+        ssl_session_cache shared:SSL:10m;
+        ssl_session_timeout 1d;
+        ssl_session_tickets off;
+
+        status_zone angie_dbx_https;
+
+        location / {
+            proxy_pass http://dbx:4224;
+            proxy_http_version 1.1;
+            
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host $host;
+            
+            # Websockets
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+
+            proxy_connect_timeout 10s;
+            proxy_read_timeout 60s;
+        }
+    }
+
+    # Grafana Subdomain Routing
+    server {
+        # MARKER_ACME_HTTP_LISTEN
+        listen 443 ssl;
+        listen [::]:443 ssl;
+        http2 on;
+        server_name grafana.__PUBLIC_HOST__;
+
+        include /etc/angie/conf.d/ssl.conf;
+
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305;
+        ssl_prefer_server_ciphers on;
+        ssl_session_cache shared:SSL:10m;
+        ssl_session_timeout 1d;
+        ssl_session_tickets off;
+
+        status_zone angie_grafana_https;
+
+        location / {
+            status_zone angie_grafana_proxy;
+            resolver 127.0.0.11 valid=30s;
+            set $grafana_upstream http://grafana:3000;
+            proxy_pass $grafana_upstream;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host $host;
+        }
+    }
+
+    # CAP Dashboard Subdomain Routing
+    server {
+        # MARKER_ACME_HTTP_LISTEN
+        listen 443 ssl;
+        listen [::]:443 ssl;
+        http2 on;
+        server_name cap.__PUBLIC_HOST__;
+
+        include /etc/angie/conf.d/ssl.conf;
+
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305;
+        ssl_prefer_server_ciphers on;
+        ssl_session_cache shared:SSL:10m;
+        ssl_session_timeout 1d;
+        ssl_session_tickets off;
+
+        status_zone angie_cap_dashboard_https;
+
+        location / {
+            status_zone angie_cap_dashboard_proxy;
+            proxy_pass http://cap:3000/;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host $host;
+            proxy_connect_timeout 10s;
+            proxy_read_timeout 60s;
         }
     }
 }

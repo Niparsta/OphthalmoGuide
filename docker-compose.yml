@@ -166,8 +166,6 @@ services:
       AUTHENTIK_SECRET_KEY: "${AUTHENTIK_SECRET_KEY}"
       AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
       AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
-    ports:
-      - "9443:9443"
     volumes:
       - ./media:/media
       - ./custom-templates:/templates
@@ -227,8 +225,8 @@ services:
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_ALLOW_SIGN_UP=true
-      - GF_SERVER_ROOT_URL=https://${PUBLIC_HOST}/grafana/
-      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      - GF_SERVER_ROOT_URL=https://grafana.${PUBLIC_HOST}/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=false
       - GF_SECURITY_ALLOW_EMBEDDING=true
       - GF_AUTH_GENERIC_OAUTH_ENABLED=true
       - GF_AUTH_GENERIC_OAUTH_NAME=Authentik
@@ -236,7 +234,7 @@ services:
       - GF_AUTH_GENERIC_OAUTH_CLIENT_ID=${GRAFANA_CLIENT_ID}
       - GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET=${GRAFANA_CLIENT_SECRET}
       - GF_AUTH_GENERIC_OAUTH_SCOPES=openid profile email
-      - GF_AUTH_GENERIC_OAUTH_AUTH_URL=https://${PUBLIC_HOST}:9443/application/o/authorize/
+      - GF_AUTH_GENERIC_OAUTH_AUTH_URL=https://auth.${PUBLIC_HOST}/application/o/authorize/
       - GF_AUTH_GENERIC_OAUTH_TOKEN_URL=http://authentik-server:9000/application/o/token/
       - GF_AUTH_GENERIC_OAUTH_API_URL=http://authentik-server:9000/application/o/userinfo/
       - GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH=contains(groups[*], 'grafana_admins') && 'Admin' || contains(groups[*], 'grafana_editors') && 'Editor' || 'Viewer'
@@ -315,8 +313,6 @@ services:
   dbx:
     image: t8y2/dbx:latest
     container_name: ophthalmoguide_dbx
-    ports:
-      - "4224:4224"
     volumes:
       - dbx_data:/app/data
     restart: unless-stopped

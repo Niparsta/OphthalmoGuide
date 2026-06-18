@@ -570,8 +570,8 @@ async function fetchConfig() {
     enabled: enabled,
     clientId: clientId,
     authority: isHttps 
-      ? `https://${currentHost}:9443/application/o/ophthalmoguide/` 
-      : `http://${currentHost}:9000/application/o/ophthalmoguide/`,
+      ? `https://auth.${currentHost}/application/o/ophthalmoguide/` 
+      : `http://auth.${currentHost}/application/o/ophthalmoguide/`,
     redirectUri: `${window.location.origin}/`
   }
 }
