@@ -31,7 +31,7 @@ else
   : > "$CONF_DIR/acme-http.conf"
   if [ ! -f "$CERT_DIR/cert.pem" ]; then
     openssl ecparam -genkey -name prime256v1 -out "$CERT_DIR/key.pem" 2>/dev/null
-    SAN="DNS:${PUBLIC_HOST},DNS:auth.${PUBLIC_HOST},DNS:dbx.${PUBLIC_HOST},DNS:grafana.${PUBLIC_HOST},DNS:cap.${PUBLIC_HOST}"
+    SAN="DNS:${PUBLIC_HOST},DNS:*.${PUBLIC_HOST}"
     case "$PUBLIC_HOST" in
       [0-9]*.[0-9]*.[0-9]*.[0-9]*)
         SAN="${SAN},IP:${PUBLIC_HOST}"

@@ -384,7 +384,7 @@ namespace bot_workerservice.Services
                 var content = new ByteArrayContent(audio);
                 content.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
 
-                var resp = await http.PostAsync($"{_backendUrl}/api/speech/recognize", content, ct);
+                var resp = await http.PostAsync($"{_backendUrl}/speech/recognize", content, ct);
                 if (!resp.IsSuccessStatusCode) return null;
 
                 using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
@@ -424,7 +424,7 @@ namespace bot_workerservice.Services
                 var http = _httpClientFactory.CreateClient();
                 http.DefaultRequestHeaders.Add("Session-Id", sessionId);
 
-                var resp = await http.PostAsJsonAsync($"{_backendUrl}/api/analyze", new { Text = text }, ct);
+                var resp = await http.PostAsJsonAsync($"{_backendUrl}/analyze", new { Text = text }, ct);
                 if (!resp.IsSuccessStatusCode)
                 {
                     await SendAsync(userId, "❌ Сервер диагностики недоступен.");
@@ -579,7 +579,7 @@ namespace bot_workerservice.Services
             {
                 var http = _httpClientFactory.CreateClient();
                 http.DefaultRequestHeaders.Add("Session-Id", sessionId);
-                var resp = await http.GetAsync($"{_backendUrl}/api/report/pdf?id={recordId}");
+                var resp = await http.GetAsync($"{_backendUrl}/report/pdf?id={recordId}");
                 if (!resp.IsSuccessStatusCode) return (null, null);
 
                 var stream = await resp.Content.ReadAsStreamAsync();
@@ -835,7 +835,7 @@ namespace bot_workerservice.Services
             try
             {
                 var http = _httpClientFactory.CreateClient();
-                var resp = await http.PostAsJsonAsync($"{_backendUrl}/api/speech/synthesize", new { text = text }, ct);
+                var resp = await http.PostAsJsonAsync($"{_backendUrl}/speech/synthesize", new { text = text }, ct);
                 if (resp.IsSuccessStatusCode)
                 {
                     return await resp.Content.ReadAsByteArrayAsync(ct);

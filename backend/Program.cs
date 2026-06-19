@@ -415,7 +415,7 @@ app.MapGet("/health", async (AppDbContext dbContext, IConnectionMultiplexer redi
 .WithName("Health");
 
 // API Endpoints
-app.MapGet("/api/symptoms", async (OphthalmologyService service) =>
+app.MapGet("/symptoms", async (OphthalmologyService service) =>
 {
     try
     {
@@ -430,7 +430,7 @@ app.MapGet("/api/symptoms", async (OphthalmologyService service) =>
 .RequireAuthorization("AdminOnly")
 .WithName("GetSymptoms");
 
-app.MapGet("/api/diseases", async (OphthalmologyService service) =>
+app.MapGet("/diseases", async (OphthalmologyService service) =>
 {
     try
     {
@@ -445,7 +445,7 @@ app.MapGet("/api/diseases", async (OphthalmologyService service) =>
 .RequireAuthorization("AdminOnly")
 .WithName("GetDiseases");
 
-app.MapPost("/api/update-data", async (UpdateDataRequest request, OphthalmologyService service) =>
+app.MapPost("/update-data", async (UpdateDataRequest request, OphthalmologyService service) =>
 {
     try
     {
@@ -466,11 +466,11 @@ app.MapPost("/api/update-data", async (UpdateDataRequest request, OphthalmologyS
 
 app.MapOidcEndpoints(builder.Configuration);
 
-app.MapGet("/api/admin/session", () => Results.Ok(new { authenticated = true }))
+app.MapGet("/admin/session", () => Results.Ok(new { authenticated = true }))
 .WithName("ValidateAdminSession")
 .RequireAuthorization("AdminOnly");
 
-app.MapGet("/api/cap/challenge", (backend.Services.CapService capService) =>
+app.MapGet("/cap/challenge", (backend.Services.CapService capService) =>
 {
     var challenge = capService.GenerateChallenge(50000);
     return Results.Ok(challenge);
@@ -478,7 +478,7 @@ app.MapGet("/api/cap/challenge", (backend.Services.CapService capService) =>
 .AllowAnonymous()
 .WithName("GetCapChallenge");
 
-app.MapPost("/api/analyze", async (HttpContext context, AnalyzeRequest request, OllamaQueueBroker broker, OphthalmologyService service, backend.Services.CapService capService, IConfiguration config, CancellationToken cancellationToken) =>
+app.MapPost("/analyze", async (HttpContext context, AnalyzeRequest request, OllamaQueueBroker broker, OphthalmologyService service, backend.Services.CapService capService, IConfiguration config, CancellationToken cancellationToken) =>
 {
     var capCheck = await VerifyCapAsync(context, config, capService);
     if (capCheck != null) return capCheck;
@@ -547,7 +547,7 @@ static IResult BuildPdfFileResult(byte[] pdfBytes)
     return Results.File(pdfBytes, "application/pdf", PdfExportService.GetFileName(reportTime));
 }
 
-app.MapGet("/api/report/pdf", async (HttpContext context, string? id, AppDbContext dbContext, PdfExportService pdfService, backend.Services.CapService capService, IConfiguration config) =>
+app.MapGet("/report/pdf", async (HttpContext context, string? id, AppDbContext dbContext, PdfExportService pdfService, backend.Services.CapService capService, IConfiguration config) =>
 {
     var capCheck = await VerifyCapAsync(context, config, capService);
     if (capCheck != null) return capCheck;
@@ -598,7 +598,7 @@ app.MapGet("/api/report/pdf", async (HttpContext context, string? id, AppDbConte
 .WithName("ExportPdfReport");
 
 
-app.MapGet("/api/history", async (HttpContext context, OphthalmologyService service, backend.Services.CapService capService, IConfiguration config) =>
+app.MapGet("/history", async (HttpContext context, OphthalmologyService service, backend.Services.CapService capService, IConfiguration config) =>
 {
     var capCheck = await VerifyCapAsync(context, config, capService);
     if (capCheck != null) return capCheck;
@@ -619,7 +619,7 @@ app.MapGet("/api/history", async (HttpContext context, OphthalmologyService serv
 .WithName("GetSessionHistory");
 
 
-app.MapGet("/api/admin/history", async (OphthalmologyService service, string? from, string? to) =>
+app.MapGet("/admin/history", async (OphthalmologyService service, string? from, string? to) =>
 {
     try
     {
@@ -650,7 +650,7 @@ app.MapGet("/api/admin/history", async (OphthalmologyService service, string? fr
 .RequireAuthorization("AdminOnly");
 
 
-app.MapDelete("/api/admin/history/bulk", async ([Microsoft.AspNetCore.Mvc.FromBody] System.Collections.Generic.List<string> ids, OphthalmologyService service) =>
+app.MapDelete("/admin/history/bulk", async ([Microsoft.AspNetCore.Mvc.FromBody] System.Collections.Generic.List<string> ids, OphthalmologyService service) =>
 {
     try
     {
@@ -666,7 +666,7 @@ app.MapDelete("/api/admin/history/bulk", async ([Microsoft.AspNetCore.Mvc.FromBo
 .RequireAuthorization("AdminOnly");
 
 // SaluteSpeech API: Распознавание речи (STT)
-app.MapPost("/api/speech/recognize", async (HttpContext context, SaluteSpeechService speechService, ILogger<Program> logger, backend.Services.CapService capService, IConfiguration config) =>
+app.MapPost("/speech/recognize", async (HttpContext context, SaluteSpeechService speechService, ILogger<Program> logger, backend.Services.CapService capService, IConfiguration config) =>
 {
     var capCheck = await VerifyCapAsync(context, config, capService);
     if (capCheck != null) return capCheck;
@@ -800,7 +800,7 @@ static bool HasAscii(byte[] bytes, int offset, string value)
 }
 
 // SaluteSpeech API: Синтез речи (TTS)
-app.MapPost("/api/speech/synthesize", async (HttpContext context, ILogger<Program> logger, backend.Services.CapService capService, IConfiguration config) =>
+app.MapPost("/speech/synthesize", async (HttpContext context, ILogger<Program> logger, backend.Services.CapService capService, IConfiguration config) =>
 {
     var capCheck = await VerifyCapAsync(context, config, capService);
     if (capCheck != null) return capCheck;
@@ -845,7 +845,7 @@ static void UseApiGatewayPage(WebApplication app)
     app.Use(async (context, next) =>
     {
         var path = context.Request.Path.Value;
-        var isGatewayPath = path is "/api" or "/api/";
+        var isGatewayPath = path is "/" or "";
         var isSupportedMethod = HttpMethods.IsGet(context.Request.Method) ||
                                 HttpMethods.IsHead(context.Request.Method);
 

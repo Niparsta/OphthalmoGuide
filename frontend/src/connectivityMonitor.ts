@@ -1,7 +1,7 @@
 import { apiUrl } from './services/api'
 
 const LIGHT_URL = `${window.location.origin}/favicon.svg`
-const DEEP_URL = apiUrl('/health/')
+const DEEP_URL = apiUrl('/health')
 const PROBE_TIMEOUT_MS = 5000
 
 const LIGHT_NORMAL_MS = 30_000

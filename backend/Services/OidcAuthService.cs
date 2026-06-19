@@ -285,7 +285,7 @@ namespace Backend.Services
 
         public static IEndpointRouteBuilder MapOidcEndpoints(this IEndpointRouteBuilder endpoints, IConfiguration config)
         {
-            endpoints.MapPost("/api/auth/token", async (HttpContext context, TokenExchangeRequest request, IConnectionMultiplexer redis, IHttpClientFactory httpClientFactory) =>
+            endpoints.MapPost("/auth/token", async (HttpContext context, TokenExchangeRequest request, IConnectionMultiplexer redis, IHttpClientFactory httpClientFactory) =>
             {
                 ClearAdminAuthCookies(context.Response);
 
@@ -396,7 +396,7 @@ namespace Backend.Services
             .AllowAnonymous()
             .WithName("ExchangeToken");
 
-            endpoints.MapPost("/api/auth/refresh", async (HttpContext context, TokenRefreshRequest? request, IConnectionMultiplexer redis, IHttpClientFactory httpClientFactory) =>
+            endpoints.MapPost("/auth/refresh", async (HttpContext context, TokenRefreshRequest? request, IConnectionMultiplexer redis, IHttpClientFactory httpClientFactory) =>
             {
                 var authority = config["Authentik:Authority"] ?? "http://localhost:9000/application/o/ophthalmoguide/";
                 var clientId = config["Authentik:ClientId"];
@@ -536,7 +536,7 @@ namespace Backend.Services
             .AllowAnonymous()
             .WithName("RefreshToken");
 
-            endpoints.MapPost("/api/auth/logout", async (HttpContext context, LogoutRequest request, IConnectionMultiplexer redis, IHttpClientFactory httpClientFactory) =>
+            endpoints.MapPost("/auth/logout", async (HttpContext context, LogoutRequest request, IConnectionMultiplexer redis, IHttpClientFactory httpClientFactory) =>
             {
                 if (!IsValkeyAvailable(redis))
                 {
@@ -618,7 +618,7 @@ namespace Backend.Services
             .AllowAnonymous()
             .WithName("LogoutToken");
 
-            endpoints.MapPost("/api/auth/backchannel-logout", async (HttpContext context, IConfiguration config, IConnectionMultiplexer redis, IConfigurationManager<OpenIdConnectConfiguration> configManager) =>
+            endpoints.MapPost("/auth/backchannel-logout", async (HttpContext context, IConfiguration config, IConnectionMultiplexer redis, IConfigurationManager<OpenIdConnectConfiguration> configManager) =>
             {
                 if (!IsValkeyAvailable(redis))
                 {
@@ -737,7 +737,7 @@ namespace Backend.Services
             {
                 HttpOnly = true,
                 Secure = true,
-                SameSite = SameSiteMode.Strict,
+                SameSite = SameSiteMode.Lax,
                 Path = "/",
                 MaxAge = expire ? TimeSpan.Zero : null
             };

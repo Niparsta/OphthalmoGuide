@@ -607,7 +607,7 @@ async function refreshAdminToken(): Promise<boolean> {
 
   isRefreshingPromise = (async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/auth/refresh`, {
+      const res = await fetch(`${API_BASE}/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -629,7 +629,7 @@ async function refreshAdminToken(): Promise<boolean> {
 
 async function resolveAdminSession(): Promise<AdminSessionStatus> {
   try {
-    const fetchSession = () => fetch(`${API_BASE}/api/admin/session`, { credentials: 'include' })
+    const fetchSession = () => fetch(`${API_BASE}/admin/session`, { credentials: 'include' })
     let res = await fetchSession()
     if (res.status === 401) {
       const refreshed = await refreshAdminToken()
@@ -673,7 +673,7 @@ function resetAdminUIState() {
 async function clearAdminSession() {
   resetAdminUIState()
   try {
-    await fetch(`${API_BASE}/api/auth/logout`, {
+    await fetch(`${API_BASE}/auth/logout`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -739,7 +739,7 @@ async function handleAuthentikCallback() {
 
   try {
     const redirectUri = sessionStorage.getItem(OAUTH_REDIRECT_URI_KEY) || getOAuthRedirectUri()
-    const res = await fetch(`${API_BASE}/api/auth/token`, {
+    const res = await fetch(`${API_BASE}/auth/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -768,7 +768,7 @@ async function logoutAdmin() {
   }
 
   try {
-    await fetch(`${API_BASE}/api/auth/logout`, {
+    await fetch(`${API_BASE}/auth/logout`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -947,13 +947,13 @@ async function apiFetch(endpoint: string, options: Omit<RequestInit, 'body'> & {
     ...(options.headers as Record<string, string> || {})
   }
 
-  const heavyEndpoints = ['/api/analyze', '/api/speech/recognize', '/api/speech/synthesize', '/api/history']
+  const heavyEndpoints = ['/analyze', '/speech/recognize', '/speech/synthesize', '/history']
   if (heavyEndpoints.includes(endpoint)) {
     try {
       await injectCapHeaders(headers, endpoint)
     } catch (err) {
       console.error('Failed to inject Cap headers:', err)
-      if (endpoint !== '/api/history') {
+      if (endpoint !== '/history') {
         showNotification('Не удалось запустить проверку безопасности. Проверьте соединение с сервером.', 'error')
       }
       throw new Error('cap_solve_failed')
@@ -1026,7 +1026,7 @@ async function apiFetch(endpoint: string, options: Omit<RequestInit, 'body'> & {
 async function loadHistory() {
   loadingHistory.value = true
   try {
-    const res = await apiFetch('/api/history')
+    const res = await apiFetch('/history')
     history.value = await res.json()
   } catch {
     // history is optional for diagnostics UI
@@ -1050,7 +1050,7 @@ async function loadAdminHistory() {
       if (!isNaN(toDate.getTime())) params.set('to', toDate.toISOString())
     }
     const query = params.toString()
-    const res = await apiFetch(`/api/admin/history${query ? `?${query}` : ''}`)
+    const res = await apiFetch(`/admin/history${query ? `?${query}` : ''}`)
     adminHistory.value = await res.json()
     rebuildTableFilterOptions(adminHistory.value)
     clearHistoryTableFilters()
@@ -1083,7 +1083,7 @@ function deleteSelectedHistory() {
       confirmModal.value.open = false
       try {
         const selectedIds = selectedHistoryRecords.value.map(record => record.id)
-        await apiFetch('/api/admin/history/bulk', { 
+        await apiFetch('/admin/history/bulk', { 
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(selectedIds)
@@ -1141,7 +1141,7 @@ async function analyzeComplaint() {
   analysisAbortController = new AbortController()
 
   try {
-    const res = await apiFetch('/api/analyze', {
+    const res = await apiFetch('/analyze', {
       method: 'POST',
       body: { 
         text: complaintText.value
@@ -1406,7 +1406,7 @@ function writeString(view: DataView, offset: number, string: string) {
 async function sendVoiceBlobToSTT(blob: Blob) {
   speechRecognizing.value = true
   try {
-    const res = await apiFetch('/api/speech/recognize', {
+    const res = await apiFetch('/speech/recognize', {
       method: 'POST',
       headers: {
         'Content-Type': blob.type
@@ -1481,7 +1481,7 @@ async function playTtsVoice() {
   try {
     let url = ttsCache.get(speechText)
     if (!url) {
-      const res = await apiFetch('/api/speech/synthesize', {
+      const res = await apiFetch('/speech/synthesize', {
         method: 'POST',
         body: JSON.stringify({ text: speechText })
       })
@@ -1504,6 +1504,11 @@ async function playTtsVoice() {
   } catch (err: any) {
     isSynthesizing.value = false
     if (err?.message === 'cap_solve_failed') {
+      return
+    }
+    // Игнорируем NotAllowedError (блокировка автоплея браузером) и AbortError (прерывание загрузкой, при котором звук часто все равно воспроизводится)
+    if (err?.name === 'NotAllowedError' || err?.name === 'AbortError') {
+      console.warn('Audio play was prevented or aborted, but may still be playing:', err)
       return
     }
     showSafeError('Не удалось воспроизвести голосовое сообщение')
@@ -1571,14 +1576,14 @@ async function fetchPdfBlob(
   }
 
   try {
-    await injectCapHeaders(headers, '/api/report/pdf')
+    await injectCapHeaders(headers, '/report/pdf')
   } catch (err) {
     console.error('Failed to obtain Cap payload for PDF download:', err)
     showNotification('Не удалось запустить проверку безопасности для скачивания PDF.', 'error')
     throw new Error('cap_solve_failed')
   }
 
-  let url = `${API_BASE}/api/report/pdf`
+  let url = `${API_BASE}/report/pdf`
   const targetId = options.recordId || loadedRecordId.value
   if (targetId) {
     url += `?id=${encodeURIComponent(targetId)}`
@@ -1592,7 +1597,7 @@ async function fetchPdfBlob(
         if (errJson && (errJson.code === 'cap_failed' || errJson.code === 'cap_required' || errJson.code === 'cap_invalid' || errJson.code === 'cap_used')) {
           clearCapCache()
           delete headers['X-Cap-Token']
-          await injectCapHeaders(headers, '/api/report/pdf')
+          await injectCapHeaders(headers, '/report/pdf')
           response = await fetch(url, { method: 'GET', headers })
         }
       } catch (err) {
@@ -1652,12 +1657,12 @@ async function loadKnowledgeData(): Promise<boolean> {
   loadingKnowledge.value = true
   knowledgeLoadFailed.value = false
   try {
-    const symRes = await apiFetch('/api/symptoms')
+    const symRes = await apiFetch('/symptoms')
     const loadedSymptoms = await symRes.json()
     symptoms.value = loadedSymptoms
     originalSymptoms.value = JSON.parse(JSON.stringify(loadedSymptoms))
 
-    const disRes = await apiFetch('/api/diseases')
+    const disRes = await apiFetch('/diseases')
     const loadedDiseases = await disRes.json()
     diseases.value = loadedDiseases.map((d: any) => ({
       name: d.name,
@@ -1772,7 +1777,7 @@ async function saveKnowledgeToDb() {
 
   savingKnowledge.value = true
   try {
-    const res = await apiFetch('/api/update-data', {
+    const res = await apiFetch('/update-data', {
       method: 'POST',
       body: {
         symptoms: symptoms.value,
