@@ -725,7 +725,7 @@ namespace Backend.Services
             {
                 HttpOnly = true,
                 Secure = true,
-                SameSite = SameSiteMode.Lax,
+                SameSite = SameSiteMode.None,
                 Path = "/",
                 MaxAge = maxAgeSeconds > 0 ? TimeSpan.FromSeconds(maxAgeSeconds) : TimeSpan.Zero
             };
@@ -737,7 +737,7 @@ namespace Backend.Services
             {
                 HttpOnly = true,
                 Secure = true,
-                SameSite = SameSiteMode.Lax,
+                SameSite = SameSiteMode.None,
                 Path = "/",
                 MaxAge = expire ? TimeSpan.Zero : null
             };
