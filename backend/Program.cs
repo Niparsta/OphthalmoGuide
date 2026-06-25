@@ -460,6 +460,21 @@ app.MapPost("/update-data", async (UpdateDataRequest request, OphthalmologyServi
 .WithName("UpdateData")
 .RequireAuthorization("AdminOnly");
 
+app.MapPost("/admin/knowledge/validate", (ValidateDataRequest request) =>
+{
+    try
+    {
+        var result = KnowledgeJsonValidator.Validate(request.Json);
+        return Results.Ok(result);
+    }
+    catch (System.Exception ex)
+    {
+        return Results.BadRequest(new { errors = new List<string> { ex.Message } });
+    }
+})
+.WithName("ValidateKnowledge")
+.RequireAuthorization("AdminOnly");
+
 
 
 

@@ -13,6 +13,7 @@ import unauthorizedHtml from '../public/401.html?raw'
 import { createConnectivityMonitor, type ConnectivityMonitor } from './connectivityMonitor'
 import Cap from 'cap-widget'
 import './App.css'
+import ApexCharts from 'apexcharts'
 
 // --- Cap CAPTCHA system ---
 const CAP_SITE_KEY = import.meta.env.VITE_CAP_SITE_KEY || 'f31d5d6959'
@@ -465,6 +466,517 @@ const historyTableFilters = ref(createDefaultHistoryTableFilters())
 const filteredAdminHistoryCount = ref(0)
 const selectedHistoryRecords = ref<SessionHistoryRecord[]>([])
 
+// --- Analytics Dashboard State & Logic ---
+const showAnalytics = ref(false)
+const showMobileFilters = ref(false)
+const filteredHistoryRecords = ref<SessionHistoryRecord[]>([])
+
+const avgMatchPercentage = computed(() => {
+  const recs = filteredHistoryRecords.value
+  if (recs.length === 0) return 0
+  let sum = 0
+  let count = 0
+  recs.forEach(r => {
+    if (r.results && r.results.length > 0) {
+      const topResults = r.results.slice(0, 5)
+      const primary = [...topResults].sort((a, b) => (b.matchPercentage || 0) - (a.matchPercentage || 0))[0]
+      if (primary) {
+        sum += primary.matchPercentage || 0
+        count++
+      }
+    }
+  })
+  return count > 0 ? Math.round(sum / count) : 0
+})
+
+const avgSymptomsCount = computed(() => {
+  const recs = filteredHistoryRecords.value
+  if (recs.length === 0) return '0'
+  const sum = recs.reduce((acc, r) => acc + (r.detectedSymptoms?.length || 0), 0)
+  return (sum / recs.length).toFixed(1)
+})
+
+const criticalThreatsCount = computed(() => {
+  return filteredHistoryRecords.value.filter(r => 
+    r.results?.slice(0, 5).some(res => (res.threatLevel || 0) === 3)
+  ).length
+})
+
+let threatChartInstance: any = null
+let diagnosesChartInstance: any = null
+let symptomsChartInstance: any = null
+let activityChartInstance: any = null
+
+function destroyCharts() {
+  if (threatChartInstance) {
+    threatChartInstance.destroy()
+    threatChartInstance = null
+  }
+  if (diagnosesChartInstance) {
+    diagnosesChartInstance.destroy()
+    diagnosesChartInstance = null
+  }
+  if (symptomsChartInstance) {
+    symptomsChartInstance.destroy()
+    symptomsChartInstance = null
+  }
+  if (activityChartInstance) {
+    activityChartInstance.destroy()
+    activityChartInstance = null
+  }
+}
+
+async function renderCharts() {
+  destroyCharts()
+  
+  const records = filteredHistoryRecords.value
+  if (!records || records.length === 0) return
+  
+  const isDarkTheme = isDark.value
+  const themeMode: 'light' | 'dark' = isDarkTheme ? 'dark' : 'light'
+  
+  // Russian localization configuration for ApexCharts
+  const ruLocale = {
+    name: 'ru',
+    options: {
+      months: ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'],
+      shortMonths: ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'],
+      days: ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'],
+      shortDays: ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'],
+      toolbar: {
+        download: 'Скачать SVG',
+        selection: 'Выбор',
+        selectionZoom: 'Масштаб выбора',
+        zoomIn: 'Приблизить',
+        zoomOut: 'Отдалить',
+        pan: 'Панорамирование',
+        reset: 'Сбросить масштаб'
+      }
+    }
+  }
+
+  // Element selectors
+  const elThreat = document.getElementById('chart-threat')
+  const elDiagnoses = document.getElementById('chart-diagnoses')
+  const elSymptoms = document.getElementById('chart-symptoms')
+  const elActivity = document.getElementById('chart-activity')
+  
+  if (!elThreat || !elDiagnoses || !elSymptoms || !elActivity) return
+  
+  const fontStack = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+
+  // 1. Threat Levels (donut)
+  const threatCounts = [0, 0, 0, 0] as number[] // 0: Нет угрозы, 1: Низкий, 2: Средний, 3: Критический
+  records.forEach(r => {
+    let maxLvl = 0
+    if (r.results && r.results.length > 0) {
+      maxLvl = Math.max(...r.results.slice(0, 5).map(res => res.threatLevel || 0))
+    }
+    if (maxLvl >= 0 && maxLvl <= 3) {
+      threatCounts[maxLvl] = (threatCounts[maxLvl] ?? 0) + 1
+    }
+  })
+  
+  const threatOptions = {
+    chart: {
+      type: 'donut' as const,
+      height: 280,
+      background: 'transparent',
+      foreColor: 'var(--text-muted)',
+      fontFamily: fontStack,
+      toolbar: { show: false },
+      locales: [ruLocale],
+      defaultLocale: 'ru'
+    },
+    series: threatCounts,
+    labels: ['Нет угрозы', 'Низкий', 'Средний', 'Критический'],
+    colors: ['#10b981', '#3b82f6', '#f59e0b', '#ef4444'],
+    theme: { mode: themeMode },
+    stroke: {
+      show: true,
+      width: 2,
+      colors: ['var(--bg-card)']
+    },
+    dataLabels: {
+      enabled: true,
+      formatter: function(val: number) {
+        return val.toFixed(0) + '%'
+      }
+    },
+    legend: {
+      position: 'bottom' as const,
+      horizontalAlign: 'center' as const,
+      fontSize: '11px',
+      markers: { strokeWidth: 0 },
+      itemMargin: { horizontal: 8, vertical: 4 }
+    },
+    tooltip: {
+      y: {
+        formatter: function(val: number) {
+          return `${val} сессий`
+        }
+      }
+    },
+    plotOptions: {
+      pie: {
+        donut: {
+          size: '65%',
+          labels: {
+            show: true,
+            total: {
+              show: true,
+              label: 'Всего сессий',
+              color: 'var(--text-muted)',
+              formatter: function(w: any) {
+                return w.globals.seriesTotals.reduce((a: number, b: number) => a + b, 0)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  threatChartInstance = new ApexCharts(elThreat, threatOptions)
+  threatChartInstance.render()
+  
+  // 2. Top Diagnoses (horizontal bar)
+  const diagCounts: Record<string, number> = {}
+  records.forEach(r => {
+    if (r.results && r.results.length > 0) {
+      const topResults = r.results.slice(0, 5)
+      const primary = [...topResults].sort((a, b) => (b.matchPercentage || 0) - (a.matchPercentage || 0))[0]
+      if (primary && primary.disease) {
+        diagCounts[primary.disease] = (diagCounts[primary.disease] || 0) + 1
+      }
+    } else {
+      diagCounts['Нет патологии'] = (diagCounts['Нет патологии'] || 0) + 1
+    }
+  })
+  
+  const sortedDiags = Object.entries(diagCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    
+  const diagLabels = sortedDiags.map(d => d[0])
+  const diagValues = sortedDiags.map(d => d[1])
+  
+  const diagOptions = {
+    chart: {
+      type: 'bar' as const,
+      height: 280,
+      background: 'transparent',
+      foreColor: 'var(--text-muted)',
+      fontFamily: fontStack,
+      toolbar: { show: false },
+      locales: [ruLocale],
+      defaultLocale: 'ru'
+    },
+    plotOptions: {
+      bar: {
+        horizontal: true,
+        barHeight: '55%',
+        borderRadius: 4
+      }
+    },
+    colors: ['#0284c7'],
+    series: [{
+      name: 'Сессий',
+      data: diagValues
+    }],
+    xaxis: {
+      categories: diagLabels,
+      labels: {
+        show: true,
+        style: { fontSize: '10px' },
+        formatter: function(val: number) {
+          return val % 1 === 0 ? val.toFixed(0) : '';
+        }
+      },
+      axisBorder: { show: false },
+      axisTicks: { show: false }
+    },
+    yaxis: {
+      labels: {
+        show: true,
+        style: { fontSize: '10px', fontWeight: 500 },
+        maxWidth: 160
+      }
+    },
+    grid: {
+      borderColor: 'var(--border-color)',
+      xaxis: { lines: { show: true } },
+      yaxis: { lines: { show: false } }
+    },
+    theme: { mode: themeMode },
+    dataLabels: {
+      enabled: true,
+      textAnchor: 'start' as const,
+      style: {
+        colors: ['#fff'],
+        fontSize: '10px',
+        fontWeight: 600
+      },
+      offsetX: 8
+    },
+    tooltip: {
+      y: {
+        formatter: function(val: number) {
+          return `${val} сессий`
+        }
+      }
+    }
+  }
+  
+  diagnosesChartInstance = new ApexCharts(elDiagnoses, diagOptions)
+  diagnosesChartInstance.render()
+  
+  // 3. Process Top Symptoms (vertical column)
+  const symCounts: Record<string, number> = {}
+  records.forEach(r => {
+    if (r.detectedSymptoms) {
+      r.detectedSymptoms.forEach(s => {
+        symCounts[s] = (symCounts[s] || 0) + 1
+      })
+    }
+  })
+  
+  const sortedSyms = Object.entries(symCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    
+  const symLabels = sortedSyms.map(s => s[0])
+  const symValues = sortedSyms.map(s => s[1])
+  
+  const symOptions = {
+    chart: {
+      type: 'bar' as const,
+      height: 280,
+      background: 'transparent',
+      foreColor: 'var(--text-muted)',
+      fontFamily: fontStack,
+      toolbar: { show: false },
+      locales: [ruLocale],
+      defaultLocale: 'ru'
+    },
+    plotOptions: {
+      bar: {
+        horizontal: false,
+        columnWidth: '45%',
+        borderRadius: 4
+      }
+    },
+    colors: ['#8b5cf6'],
+    series: [{
+      name: 'Случаев',
+      data: symValues
+    }],
+    xaxis: {
+      categories: symLabels,
+      labels: {
+        show: true,
+        style: { fontSize: '9px' },
+        trim: true,
+        hideOverlappingLabels: true
+      },
+      axisBorder: { show: false },
+      axisTicks: { show: false }
+    },
+    yaxis: {
+      labels: {
+        show: true,
+        style: { fontSize: '10px' },
+        formatter: function(val: number) {
+          return val % 1 === 0 ? val.toFixed(0) : '';
+        }
+      }
+    },
+    grid: {
+      borderColor: 'var(--border-color)',
+      xaxis: { lines: { show: false } },
+      yaxis: { lines: { show: true } }
+    },
+    theme: { mode: themeMode },
+    dataLabels: {
+      enabled: true,
+      style: {
+        colors: ['var(--text-main)'],
+        fontSize: '10px',
+        fontWeight: 600
+      },
+      offsetY: -18
+    },
+    tooltip: {
+      y: {
+        formatter: function(val: number) {
+          return `${val} раз(а)`
+        }
+      }
+    }
+  }
+  
+  symptomsChartInstance = new ApexCharts(elSymptoms, symOptions)
+  symptomsChartInstance.render()
+  
+  // 4. Process Diagnostic Activity Over Time (datetime area chart)
+  const dateCounts: Record<string, number> = {}
+  records.forEach(r => {
+    const d = new Date(r.timestamp)
+    if (!isNaN(d.getTime())) {
+      const year = d.getFullYear()
+      const month = String(d.getMonth() + 1).padStart(2, '0')
+      const day = String(d.getDate()).padStart(2, '0')
+      const dateStr = `${year}-${month}-${day}`
+      dateCounts[dateStr] = (dateCounts[dateStr] || 0) + 1
+    }
+  })
+  
+  const sortedDates = Object.entries(dateCounts)
+    .sort((a, b) => new Date(a[0]).getTime() - new Date(b[0]).getTime())
+    
+  const seriesData = sortedDates.map(item => {
+    const parts = item[0].split('-').map(Number)
+    const year = parts[0] ?? 0
+    const month = parts[1] ?? 1
+    const day = parts[2] ?? 1
+    const localTimestamp = new Date(year, month - 1, day).getTime()
+    return [localTimestamp, item[1]]
+  })
+  
+  const activityOptions = {
+    chart: {
+      type: 'area' as const,
+      height: 280,
+      background: 'transparent',
+      foreColor: 'var(--text-muted)',
+      fontFamily: fontStack,
+      toolbar: { show: false },
+      zoom: { enabled: false },
+      locales: [ruLocale],
+      defaultLocale: 'ru'
+    },
+    dataLabels: { enabled: false },
+    stroke: {
+      curve: 'smooth' as const,
+      width: 3,
+      colors: ['#0284c7']
+    },
+    fill: {
+      type: 'gradient',
+      gradient: {
+        shadeIntensity: 1,
+        opacityFrom: 0.35,
+        opacityTo: 0.05,
+        stops: [0, 100],
+        colorStops: [
+          { offset: 0, color: '#0284c7', opacity: 0.35 },
+          { offset: 100, color: '#0284c7', opacity: 0.05 }
+        ]
+      }
+    },
+    series: [{
+      name: 'Сессий диагностики',
+      data: seriesData
+    }],
+    xaxis: {
+      type: 'datetime' as const,
+      labels: {
+        datetimeUTC: false,
+        style: { fontSize: '9px' }
+      },
+      axisBorder: { show: false },
+      axisTicks: { show: false }
+    },
+    yaxis: {
+      labels: {
+        show: true,
+        style: { fontSize: '10px' },
+        formatter: function(val: number) {
+          return val % 1 === 0 ? val.toFixed(0) : '';
+        }
+      },
+      min: 0,
+      forceNiceScale: true
+    },
+    grid: {
+      borderColor: 'var(--border-color)',
+      xaxis: { lines: { show: false } },
+      yaxis: { lines: { show: true } }
+    },
+    theme: { mode: themeMode },
+    tooltip: {
+      x: { format: 'dd.MM.yyyy' },
+      y: {
+        formatter: function(val: number) {
+          return `${val} сессий`
+        }
+      }
+    }
+  }
+  
+  activityChartInstance = new ApexCharts(elActivity, activityOptions)
+  activityChartInstance.render()
+}
+
+watch([showAnalytics, filteredHistoryRecords, isDark], async () => {
+  if (showAnalytics.value) {
+    await nextTick()
+    renderCharts()
+  } else {
+    destroyCharts()
+  }
+}, { deep: true })
+
+onUnmounted(() => {
+  destroyCharts()
+})
+
+// Watch both filter configurations and underlying history data to sync results across devices
+watch([historyTableFilters, adminHistory], () => {
+  const filters = historyTableFilters.value
+  let result = [...adminHistory.value]
+  
+  if (filters.timestamp?.value) {
+    const val = filters.timestamp.value.toLowerCase()
+    result = result.filter(r => {
+      if (!r.timestamp) return false
+      return formatDate(r.timestamp).toLowerCase().includes(val) || r.timestamp.toLowerCase().includes(val)
+    })
+  }
+  
+  if (filters.id?.value) {
+    const val = filters.id.value.toLowerCase()
+    result = result.filter(r => r.id?.toLowerCase().includes(val))
+  }
+  
+  if (filters.sessionId?.value) {
+    const val = filters.sessionId.value.toLowerCase()
+    result = result.filter(r => r.sessionId?.toLowerCase().includes(val))
+  }
+  
+  if (filters.complaintText?.value) {
+    const val = filters.complaintText.value.toLowerCase()
+    result = result.filter(r => r.complaintText?.toLowerCase().includes(val))
+  }
+  
+  if (filters.detectedSymptoms?.value) {
+    const val = filters.detectedSymptoms.value.toLowerCase()
+    result = result.filter(r => 
+      Array.isArray(r.detectedSymptoms) && r.detectedSymptoms.some(s => s.toLowerCase().includes(val))
+    )
+  }
+  
+  if (filters.results?.value) {
+    const val = filters.results.value.toLowerCase()
+    result = result.filter(r => 
+      Array.isArray(r.results) && r.results.slice(0, 5).some(res => res.disease.toLowerCase().includes(val))
+    )
+  }
+  
+  filteredHistoryRecords.value = result
+  filteredAdminHistoryCount.value = result.length
+}, { deep: true, immediate: true })
+
 const expandedHistoryDiseases = ref<Record<string, boolean>>({})
 const loadedRecordId = ref<string | null>(null)
 function toggleHistoryDiseaseExpand(recordId: string, diseaseName: string) {
@@ -483,8 +995,8 @@ function rebuildTableFilterOptions(records: SessionHistoryRecord[]) {
     diagnosticIds: [...new Set(records.map(record => record.id).filter(Boolean))].sort(),
     sessionIds: [...new Set(records.map(record => record.sessionId).filter((id): id is string => Boolean(id)))].sort(),
     complaints: [...new Set(records.map(record => record.complaintText).filter(Boolean))].sort(),
-    symptoms: [...new Set(records.flatMap(record => record.detectedSymptoms || []))].sort(),
-    diseases: [...new Set(records.flatMap(record => record.results?.map(result => result.disease) || []))].sort(),
+    symptoms: [...new Set(records.flatMap(record => record.detectedSymptoms || []).filter(Boolean))].sort(),
+    diseases: [...new Set(records.flatMap(record => record.results?.map(result => result.disease) || []).filter(Boolean))].sort(),
   }
 }
 
@@ -494,9 +1006,10 @@ function truncateFilterLabel(text: string, maxLength = 72) {
 }
 
 function onHistoryTableFilter(event: DataTableFilterEvent) {
-  filteredAdminHistoryCount.value = Array.isArray(event.filteredValue)
-    ? event.filteredValue.length
-    : adminHistory.value.length
+  filteredHistoryRecords.value = Array.isArray(event.filteredValue)
+    ? event.filteredValue
+    : [...adminHistory.value]
+  filteredAdminHistoryCount.value = filteredHistoryRecords.value.length
 }
 
 // Admin history period filter (datetime-local strings, local time, second precision)
@@ -1054,12 +1567,14 @@ async function loadAdminHistory() {
     adminHistory.value = await res.json()
     rebuildTableFilterOptions(adminHistory.value)
     clearHistoryTableFilters()
+    filteredHistoryRecords.value = [...adminHistory.value]
     filteredAdminHistoryCount.value = adminHistory.value.length
     selectedHistoryRecords.value = []
   } catch {
     adminHistory.value = []
     rebuildTableFilterOptions([])
     clearHistoryTableFilters()
+    filteredHistoryRecords.value = []
     filteredAdminHistoryCount.value = 0
     selectedHistoryRecords.value = []
   } finally {
@@ -1092,8 +1607,9 @@ function deleteSelectedHistory() {
         adminHistory.value = adminHistory.value.filter(r => !deletedSet.has(r.id))
         history.value = history.value.filter(r => !deletedSet.has(r.id))
         rebuildTableFilterOptions(adminHistory.value)
+        filteredHistoryRecords.value = filteredHistoryRecords.value.filter(r => !deletedSet.has(r.id))
         selectedHistoryRecords.value = []
-        filteredAdminHistoryCount.value = adminHistory.value.length
+        filteredAdminHistoryCount.value = filteredHistoryRecords.value.length
         showNotification('Выбранные записи удалены', 'success')
       } catch (err) {
         showSafeError('Не удалось удалить выбранные записи, попробуйте ещё раз')
@@ -1673,10 +2189,6 @@ async function loadKnowledgeData(): Promise<boolean> {
     }))
     originalDiseases.value = JSON.parse(JSON.stringify(loadedDiseases))
 
-    const firstDisease = diseases.value[0]
-    if (firstDisease && !selectedDisease.value) {
-      selectDisease(firstDisease)
-    }
     return true
   } catch {
     knowledgeLoadFailed.value = true
@@ -1688,7 +2200,11 @@ async function loadKnowledgeData(): Promise<boolean> {
 }
 
 function selectDisease(disease: DiseaseRecord) {
-  selectedDisease.value = JSON.parse(JSON.stringify(disease))
+  if (selectedDisease.value && selectedDisease.value.name === disease.name) {
+    selectedDisease.value = null
+  } else {
+    selectedDisease.value = JSON.parse(JSON.stringify(disease))
+  }
 }
 
 function updateSelectedDiseaseInList() {
@@ -1799,6 +2315,142 @@ async function saveKnowledgeToDb() {
   }
 }
 
+const importReport = ref<{
+  isValid: boolean
+  errors: string[]
+  warnings: string[]
+  log: string
+  dataToApply: { symptoms: string[]; diseases: DiseaseRecord[] } | null
+} | null>(null)
+
+async function handleJsonFileImport(event: Event) {
+  const input = event.target as HTMLInputElement
+  if (!input.files || input.files.length === 0) return
+
+  const file = input.files[0]
+  if (!file) return
+
+  // Frontend check for JSON file type
+  const isJson = file.type === 'application/json' || file.name.toLowerCase().endsWith('.json')
+  if (!isJson) {
+    importReport.value = {
+      isValid: false,
+      errors: ['Неверный формат файла. Разрешены только файлы .json'],
+      warnings: [],
+      log: 'Ошибка: Выбранный файл не является файлом JSON (.json)',
+      dataToApply: null
+    }
+    showSafeError('Выбранный файл должен иметь формат JSON')
+    input.value = ''
+    return
+  }
+
+  const reader = new FileReader()
+  reader.onload = async (e) => {
+    try {
+      const text = e.target?.result as string
+      
+      // Call backend validator endpoint
+      const res = await apiFetch('/admin/knowledge/validate', {
+        method: 'POST',
+        body: {
+          json: text
+        }
+      })
+      
+      const validation = await res.json()
+      
+      const logLines: string[] = []
+      if (validation.errors && validation.errors.length) {
+        validation.errors.forEach((err: string) => logLines.push(err))
+      }
+      if (validation.warnings && validation.warnings.length) {
+        validation.warnings.forEach((warn: string) => logLines.push(warn))
+      }
+      
+      let dataToApply = null
+      if (validation.isValid) {
+        try {
+          dataToApply = JSON.parse(text)
+        } catch (parseErr: any) {
+          validation.isValid = false
+          validation.errors = validation.errors || []
+          validation.errors.push(`Внутренняя ошибка парсинга: ${parseErr.message}`)
+          logLines.push(`Внутренняя ошибка парсинга: ${parseErr.message}`)
+        }
+      }
+      
+      importReport.value = {
+        isValid: validation.isValid,
+        errors: validation.errors || [],
+        warnings: validation.warnings || [],
+        log: logLines.join("\r\n"),
+        dataToApply
+      }
+      
+      if (validation.isValid) {
+        showNotification('Файл успешно прошел проверку структуры на сервере', 'success')
+      } else {
+        showSafeError('Обнаружены ошибки в структуре JSON')
+      }
+    } catch (err: any) {
+      importReport.value = {
+        isValid: false,
+        errors: [`Сбой при обращении к серверу валидации: ${err?.message || 'Неизвестная ошибка'}`],
+        warnings: [],
+        log: `Сбой при обращении к серверу валидации: ${err?.message || 'Неизвестная ошибка'}. Убедитесь, что сервер доступен.`,
+        dataToApply: null
+      }
+      showSafeError('Не удалось выполнить проверку файла на сервере')
+    } finally {
+      input.value = ''
+    }
+  }
+  reader.readAsText(file)
+}
+
+function downloadImportValidationLog() {
+  if (!importReport.value) return
+  const blob = new Blob([importReport.value.log], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = 'validation_log.txt'
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
+function applyImportedData() {
+  if (!importReport.value || !importReport.value.dataToApply) return
+  
+  symptoms.value = [...importReport.value.dataToApply.symptoms]
+  diseases.value = JSON.parse(JSON.stringify(importReport.value.dataToApply.diseases))
+  
+  selectedDisease.value = null
+  importReport.value = null
+  showNotification('Данные импортированы. Не забудьте сохранить изменения', 'info')
+}
+
+function exportKnowledgeToJsonFile() {
+  const data = {
+    symptoms: symptoms.value,
+    diseases: diseases.value
+  }
+  const jsonString = JSON.stringify(data, null, 2)
+  const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = 'ophthalmology_knowledge.json'
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+  showNotification('Начало загрузки файла базы знаний', 'success')
+}
+
 // Text Threat Labels
 function getThreatLabel(level: number) {
   switch (level) {
@@ -1888,6 +2540,13 @@ const historyComplaintFilterOptions = computed(() =>
     value: complaint,
   }))
 )
+
+const isDateFilterDisabled = computed(() => !historyDateFilterOptions.value || historyDateFilterOptions.value.length === 0)
+const isDiagnosticIdFilterDisabled = computed(() => !tableFilterOptions.value.diagnosticIds || tableFilterOptions.value.diagnosticIds.length === 0)
+const isSessionIdFilterDisabled = computed(() => !tableFilterOptions.value.sessionIds || tableFilterOptions.value.sessionIds.length === 0)
+const isDiseaseFilterDisabled = computed(() => !tableFilterOptions.value.diseases || tableFilterOptions.value.diseases.length === 0)
+const isSymptomFilterDisabled = computed(() => !tableFilterOptions.value.symptoms || tableFilterOptions.value.symptoms.length === 0)
+const isComplaintFilterDisabled = computed(() => !historyComplaintFilterOptions.value || historyComplaintFilterOptions.value.length === 0)
 
 const hasActiveHistoryTableFilters = computed(() => {
   const filters = historyTableFilters.value
@@ -2852,7 +3511,7 @@ onUnmounted(() => {
           <!-- Right Column: Detail Editor -->
           <div v-else-if="selectedDisease" class="symptom-editor-card-premium">
             <div class="editor-header-sticky-premium">
-              <div class="editor-header-row">
+              <div class="editor-header-row" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem;">
                 <div>
                   <h2 style="margin: 0; font-size: 1.25rem; font-weight: 700; color: var(--text-main);">
                     Настройка патологии: <span class="focused-disease-title">{{ selectedDisease.name }}</span>
@@ -2861,6 +3520,19 @@ onUnmounted(() => {
                     Свяжите симптомы и настройте уровень угрозы для этой патологии
                   </p>
                 </div>
+                <button
+                  type="button"
+                  class="btn-bulk-action"
+                  style="padding: 4px 8px; font-size: 0.75rem; height: auto; background: transparent; border-color: var(--border-color); color: var(--text-main); display: inline-flex; align-items: center; gap: 0.25rem;"
+                  @click="selectedDisease = null"
+                  title="Закрыть редактор патологии"
+                >
+                  <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2" fill="none">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                  </svg>
+                  Свернуть
+                </button>
               </div>
 
               <!-- Interactive segmented threat picker -->
@@ -2978,18 +3650,151 @@ onUnmounted(() => {
           </div>
 
           <!-- Empty State (No pathology selected) -->
-          <div v-else class="symptom-editor-card-premium symptom-editor-empty">
-            <div class="knowledge-empty-icon knowledge-empty-icon--info" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="32" height="32" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M9 18h6"></path>
-                <path d="M10 22h4"></path>
-                <path d="M12 2a7 7 0 0 0-4 12.74V17h8v-2.26A7 7 0 0 0 12 2z"></path>
-              </svg>
+          <div v-else class="symptom-editor-card-premium symptom-editor-empty" style="display: flex; flex-direction: column; justify-content: center; gap: 2rem;">
+            <div style="text-align: center;">
+              <div class="knowledge-empty-icon knowledge-empty-icon--info" aria-hidden="true" style="margin: 0 auto 1rem auto;">
+                <svg viewBox="0 0 24 24" width="32" height="32" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M9 18h6"></path>
+                  <path d="M10 22h4"></path>
+                  <path d="M12 2a7 7 0 0 0-4 12.74V17h8v-2.26A7 7 0 0 0 12 2z"></path>
+                </svg>
+              </div>
+              <h3 class="knowledge-empty-title">Патология не выбрана</h3>
+              <p class="knowledge-empty-text">
+                Выберите патологию из списка слева, чтобы настроить её симптомы и уровень угрозы, либо воспользуйтесь инструментами обмена данными ниже.
+              </p>
             </div>
-            <h3 class="knowledge-empty-title">Патология не выбрана</h3>
-            <p class="knowledge-empty-text">
-              Выберите патологию из списка слева, чтобы настроить её симптомы и уровень угрозы.
-            </p>
+
+            <!-- Import/Export Tools Panel -->
+            <div class="knowledge-backup-panel" style="width: 100%; max-width: 500px; margin: 0 auto; padding-top: 1.5rem; border-top: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 1.25rem; text-align: left;">
+              <h4 style="margin: 0; font-size: 1.05rem; font-weight: 700; color: var(--text-main); display: flex; align-items: center; gap: 0.5rem;">
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                  <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                  <line x1="12" y1="22.08" x2="12" y2="12"></line>
+                </svg>
+                Обмен базой знаний
+              </h4>
+              
+              <div style="display: flex; gap: 1rem;">
+                <button
+                  type="button"
+                  class="btn-bulk-action"
+                  @click="exportKnowledgeToJsonFile"
+                  style="flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; height: 38px; cursor: pointer; background: var(--bg-input); color: var(--text-main); border: 1px solid var(--border-color); font-weight: 600; font-size: 0.8rem;"
+                >
+                  <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                  </svg>
+                  Экспорт в файл
+                </button>
+
+                <label
+                  class="btn-bulk-action"
+                  style="flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; height: 38px; cursor: pointer; background: var(--bg-input); color: var(--text-main); border: 1px solid var(--border-color); font-weight: 600; font-size: 0.8rem; margin-bottom: 0;"
+                >
+                  <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="17 8 12 3 7 8"></polyline>
+                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                  </svg>
+                  Импорт из файла
+                  <input
+                    type="file"
+                    accept=".json"
+                    @change="handleJsonFileImport"
+                    style="display: none;"
+                  />
+                </label>
+              </div>
+
+              <!-- Validator Report Area -->
+              <div v-if="importReport" class="import-validation-report" style="display: flex; flex-direction: column; gap: 0.75rem; padding: 1rem; border-radius: 8px; border: 1px solid;" :style="importReport.isValid ? 'background-color: rgba(16,185,129,0.06); border-color: rgba(16,185,129,0.25);' : 'background-color: rgba(239,68,68,0.06); border-color: rgba(239,68,68,0.25);'">
+                
+                <!-- SUCCESS CASE -->
+                <div v-if="importReport.isValid" style="display: flex; flex-direction: column; gap: 0.75rem;">
+                  <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <span style="font-weight: 700; font-size: 0.85rem; color: var(--color-green);">
+                      Валидация пройдена успешно
+                    </span>
+                    <button
+                      v-if="importReport.log.length"
+                      type="button"
+                      class="btn-copy-table-diagnostic-id"
+                      style="font-size: 0.75rem; padding: 2px 6px; height: auto;"
+                      @click="downloadImportValidationLog"
+                      title="Скачать лог проверок"
+                    >
+                      Скачать лог
+                    </button>
+                  </div>
+                  
+                  <div v-if="importReport.warnings.length" style="font-size: 0.8rem; color: var(--color-orange); max-height: 100px; overflow-y: auto;">
+                    <strong>Предупреждения ({{ importReport.warnings.length }}):</strong>
+                    <ul style="margin: 0.25rem 0 0 0; padding-left: 1.25rem; list-style-type: disc;">
+                      <li v-for="(warn, wIdx) in importReport.warnings" :key="wIdx">{{ warn }}</li>
+                    </ul>
+                  </div>
+
+                  <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 0.25rem;">
+                    <button
+                      type="button"
+                      class="btn-validation-apply"
+                      @click="applyImportedData"
+                    >
+                      Применить и обновить
+                    </button>
+                    <button
+                      type="button"
+                      class="btn-validation-close"
+                      @click="importReport = null"
+                    >
+                      Отмена
+                    </button>
+                  </div>
+                </div>
+
+                <!-- ERROR CASE (INVALID JSON) -->
+                <div v-else style="display: flex; flex-direction: column; gap: 0.85rem; align-items: center; text-align: center; padding: 0.25rem 0;">
+                  <span style="font-weight: 700; font-size: 0.9rem; color: var(--color-red);">
+                    Ошибка валидации структуры JSON
+                  </span>
+                  
+                  <textarea
+                    v-if="importReport.log"
+                    readonly
+                    style="width: 100%; height: 120px; font-family: monospace; font-size: 0.75rem; background: var(--bg-input); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 6px; padding: 0.5rem; resize: none; overflow-y: auto; text-align: left;"
+                    :value="importReport.log"
+                  ></textarea>
+
+                  <button
+                    type="button"
+                    class="btn-validation-download"
+                    @click="downloadImportValidationLog"
+                    title="Скачать лог ошибок в текстовом файле"
+                  >
+                    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                      <polyline points="7 10 12 15 17 10"></polyline>
+                      <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                    Скачать лог ошибок
+                  </button>
+
+                  <button
+                    type="button"
+                    class="btn-validation-close"
+                    style="width: 100%; max-width: 280px; height: 38px;"
+                    @click="importReport = null"
+                  >
+                    Закрыть
+                  </button>
+                </div>
+              </div>
+            </div>
+
           </div>
 
         </div>
@@ -3042,6 +3847,28 @@ onUnmounted(() => {
           <div class="history-bottom-header">
             <h3>Все сессии диагностики</h3>
             <div class="history-header-actions">
+              <button
+                class="btn-analytics-toggle"
+                :class="{ active: showAnalytics }"
+                @click="showAnalytics = !showAnalytics"
+              >
+                <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.5" fill="none">
+                  <line x1="18" y1="20" x2="18" y2="10"></line>
+                  <line x1="12" y1="20" x2="12" y2="4"></line>
+                  <line x1="6" y1="20" x2="6" y2="14"></line>
+                </svg>
+                Аналитика
+              </button>
+              <button
+                class="btn-analytics-toggle mobile-only-btn"
+                :class="{ active: showMobileFilters }"
+                @click="showMobileFilters = !showMobileFilters"
+              >
+                <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.5" fill="none">
+                  <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+                </svg>
+                Фильтры
+              </button>
               <span class="history-stat-chip">{{ filteredAdminHistoryCount }} из {{ adminHistory.length }} записей</span>
               <button
                 class="btn-delete-history"
@@ -3056,6 +3883,229 @@ onUnmounted(() => {
                 </svg>
                 Удалить выбранные ({{ selectedHistoryRecords.length }})
               </button>
+            </div>
+          </div>
+
+          <!-- Analytics Dashboard -->
+          <div v-show="showAnalytics" class="analytics-dashboard-premium">
+            <div v-if="filteredHistoryRecords.length === 0" class="analytics-empty-state">
+              <svg viewBox="0 0 24 24" width="40" height="40" stroke="currentColor" stroke-width="1.75" fill="none" class="analytics-empty-icon" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+              </svg>
+              <span class="analytics-empty-text">Нет данных для отображения аналитики по текущим фильтрам</span>
+            </div>
+
+            <div v-else>
+              <!-- Stats cards -->
+              <div class="analytics-stats-grid">
+                <div class="analytics-stat-card">
+                  <div class="analytics-stat-icon-wrapper">
+                    <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none">
+                      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                      <circle cx="9" cy="7" r="4"></circle>
+                      <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                      <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                    </svg>
+                  </div>
+                  <div class="analytics-stat-content">
+                    <span class="analytics-stat-label">Всего обращений</span>
+                    <span class="analytics-stat-value">{{ filteredHistoryRecords.length }}</span>
+                  </div>
+                </div>
+                
+                <div class="analytics-stat-card accuracy-green">
+                  <div class="analytics-stat-icon-wrapper">
+                    <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                      <path d="m9 11 2 2 4-4"></path>
+                    </svg>
+                  </div>
+                  <div class="analytics-stat-content">
+                    <span class="analytics-stat-label">Среднее совпадение</span>
+                    <span class="analytics-stat-value">{{ avgMatchPercentage }}%</span>
+                  </div>
+                </div>
+
+                <div class="analytics-stat-card threat-red">
+                  <div class="analytics-stat-icon-wrapper">
+                    <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <line x1="12" y1="8" x2="12" y2="12"></line>
+                      <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                    </svg>
+                  </div>
+                  <div class="analytics-stat-content">
+                    <span class="analytics-stat-label">Критические угрозы</span>
+                    <span class="analytics-stat-value">{{ criticalThreatsCount }}</span>
+                  </div>
+                </div>
+
+                <div class="analytics-stat-card symptoms-purple">
+                  <div class="analytics-stat-icon-wrapper">
+                    <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none">
+                      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                      <line x1="12" y1="11" x2="12" y2="17"></line>
+                      <line x1="9" y1="14" x2="15" y2="14"></line>
+                    </svg>
+                  </div>
+                  <div class="analytics-stat-content">
+                    <span class="analytics-stat-label">Симптомов на сессию</span>
+                    <span class="analytics-stat-value">{{ avgSymptomsCount }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Charts Grid -->
+              <div class="analytics-charts-grid">
+                <div class="analytics-chart-container">
+                  <div class="analytics-chart-title">
+                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                      <path d="M2 12h20"></path>
+                    </svg>
+                    Распределение сессий по уровню угрозы
+                  </div>
+                  <div id="chart-threat" class="analytics-chart-canvas"></div>
+                </div>
+
+                <div class="analytics-chart-container">
+                  <div class="analytics-chart-title">
+                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+                      <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                      <line x1="16" y1="2" x2="16" y2="6"></line>
+                      <line x1="8" y1="2" x2="8" y2="6"></line>
+                      <line x1="3" y1="10" x2="21" y2="10"></line>
+                    </svg>
+                    Динамика обращений за выбранный период
+                  </div>
+                  <div id="chart-activity" class="analytics-chart-canvas"></div>
+                </div>
+
+                <div class="analytics-chart-container">
+                  <div class="analytics-chart-title">
+                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+                      <line x1="18" y1="20" x2="18" y2="10"></line>
+                      <line x1="12" y1="20" x2="12" y2="4"></line>
+                      <line x1="6" y1="20" x2="6" y2="14"></line>
+                    </svg>
+                    Топ частых предварительных диагнозов
+                  </div>
+                  <div id="chart-diagnoses" class="analytics-chart-canvas"></div>
+                </div>
+
+                <div class="analytics-chart-container">
+                  <div class="analytics-chart-title">
+                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+                      <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+                    </svg>
+                    Топ часто встречающихся симптомов
+                  </div>
+                  <div id="chart-symptoms" class="analytics-chart-canvas"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Mobile Filters Panel -->
+          <div v-show="showMobileFilters" class="mobile-filters-panel-premium">
+            <div class="mobile-filters-header">
+              <h4>Фильтрация сессий</h4>
+              <button type="button" class="btn-clear-filters-mobile" @click="clearHistoryTableFilters">
+                Сбросить
+              </button>
+            </div>
+            
+            <div class="mobile-filters-grid">
+              <div class="mobile-filter-item">
+                <label>Дата и время</label>
+                <Select
+                  v-model="historyTableFilters.timestamp.value"
+                  :options="historyDateFilterOptions"
+                  optionLabel="label"
+                  optionValue="value"
+                  placeholder="Все даты"
+                  editable
+                  showClear
+                  overlay-class="history-filter-select-panel"
+                  class="history-filter-select"
+                  :disabled="isDateFilterDisabled"
+                />
+              </div>
+
+              <div class="mobile-filter-item">
+                <label>ID диагностики</label>
+                <Select
+                  v-model="historyTableFilters.id.value"
+                  :options="tableFilterOptions.diagnosticIds"
+                  placeholder="Все ID"
+                  editable
+                  showClear
+                  overlay-class="history-filter-select-panel"
+                  class="history-filter-select"
+                  :disabled="isDiagnosticIdFilterDisabled"
+                />
+              </div>
+
+              <div class="mobile-filter-item">
+                <label>ID сессии</label>
+                <Select
+                  v-model="historyTableFilters.sessionId.value"
+                  :options="tableFilterOptions.sessionIds"
+                  placeholder="Все сессии"
+                  editable
+                  showClear
+                  overlay-class="history-filter-select-panel"
+                  class="history-filter-select"
+                  :disabled="isSessionIdFilterDisabled"
+                />
+              </div>
+
+              <div class="mobile-filter-item">
+                <label>Диагноз</label>
+                <Select
+                  v-model="historyTableFilters.results.value"
+                  :options="tableFilterOptions.diseases"
+                  placeholder="Все диагнозы"
+                  editable
+                  showClear
+                  overlay-class="history-filter-select-panel"
+                  class="history-filter-select"
+                  :disabled="isDiseaseFilterDisabled"
+                />
+              </div>
+
+              <div class="mobile-filter-item">
+                <label>Симптом</label>
+                <Select
+                  v-model="historyTableFilters.detectedSymptoms.value"
+                  :options="tableFilterOptions.symptoms"
+                  placeholder="Все симптомы"
+                  editable
+                  showClear
+                  overlay-class="history-filter-select-panel"
+                  class="history-filter-select"
+                  :disabled="isSymptomFilterDisabled"
+                />
+              </div>
+
+              <div class="mobile-filter-item">
+                <label>Жалоба (текст)</label>
+                <Select
+                  v-model="historyTableFilters.complaintText.value"
+                  :options="historyComplaintFilterOptions"
+                  optionLabel="label"
+                  optionValue="value"
+                  placeholder="Все жалобы"
+                  editable
+                  showClear
+                  overlay-class="history-filter-select-panel"
+                  class="history-filter-select"
+                  :disabled="isComplaintFilterDisabled"
+                />
+              </div>
             </div>
           </div>
 
@@ -3094,6 +4144,7 @@ onUnmounted(() => {
                     showClear
                     overlay-class="history-filter-select-panel"
                     class="history-filter-select"
+                    :disabled="isDateFilterDisabled"
                     @update:modelValue="filterCallback()"
                     @change="filterCallback()"
                   />
@@ -3127,6 +4178,7 @@ onUnmounted(() => {
                     showClear
                     overlay-class="history-filter-select-panel"
                     class="history-filter-select"
+                    :disabled="isDiagnosticIdFilterDisabled"
                     @update:modelValue="filterCallback()"
                     @change="filterCallback()"
                   />
@@ -3161,6 +4213,7 @@ onUnmounted(() => {
                     showClear
                     overlay-class="history-filter-select-panel"
                     class="history-filter-select"
+                    :disabled="isSessionIdFilterDisabled"
                     @update:modelValue="filterCallback()"
                     @change="filterCallback()"
                   />
@@ -3182,6 +4235,7 @@ onUnmounted(() => {
                     showClear
                     overlay-class="history-filter-select-panel"
                     class="history-filter-select"
+                    :disabled="isComplaintFilterDisabled"
                     @update:modelValue="filterCallback()"
                     @change="filterCallback()"
                   />
@@ -3225,6 +4279,7 @@ onUnmounted(() => {
                     showClear
                     overlay-class="history-filter-select-panel"
                     class="history-filter-select"
+                    :disabled="isSymptomFilterDisabled"
                     @update:modelValue="filterCallback()"
                     @change="filterCallback()"
                   />
@@ -3297,6 +4352,7 @@ onUnmounted(() => {
                     showClear
                     overlay-class="history-filter-select-panel"
                     class="history-filter-select"
+                    :disabled="isDiseaseFilterDisabled"
                     @update:modelValue="filterCallback()"
                     @change="filterCallback()"
                   />

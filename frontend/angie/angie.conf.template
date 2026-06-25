@@ -64,10 +64,56 @@ http {
     }
     # MARKER_HTTP_REDIRECT_END
 
+    # Default server block for invalid domains on port 80
     server {
-        # MARKER_ACME_HTTP_LISTEN
+        listen 80 default_server;
+        listen [::]:80 default_server;
+        server_name _;
+
+        root /usr/share/angie/html;
+        error_page 404 /404.html;
+
+        location = /404.html {
+            internal;
+        }
+
+        location / {
+            return 404;
+        }
+    }
+
+    # Default server block for invalid domains on port 443 (SSL)
+    server {
         listen 443 ssl default_server;
         listen [::]:443 ssl default_server;
+        http2 on;
+        server_name _;
+
+        include /etc/angie/conf.d/ssl.conf;
+
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305;
+        ssl_prefer_server_ciphers on;
+        ssl_session_cache shared:SSL:10m;
+        ssl_session_timeout 1d;
+        ssl_session_tickets off;
+
+        root /usr/share/angie/html;
+        error_page 404 /404.html;
+
+        location = /404.html {
+            internal;
+        }
+
+        location / {
+            return 404;
+        }
+    }
+
+    server {
+        # MARKER_ACME_HTTP_LISTEN
+        listen 443 ssl;
+        listen [::]:443 ssl;
         http2 on;
         server_name __PUBLIC_HOST__;
 

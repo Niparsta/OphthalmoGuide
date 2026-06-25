@@ -19,6 +19,11 @@ namespace Backend.Models
         public List<DiseaseRecord> Diseases { get; set; } = new();
     }
 
+    public class ValidateDataRequest
+    {
+        public string Json { get; set; } = string.Empty;
+    }
+
     public class DiseaseSymptom
     {
         public string Name { get; set; } = string.Empty;
