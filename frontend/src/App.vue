@@ -2478,11 +2478,7 @@ function getThreatAdvice(level: number): string {
 }
 
 const YANDEX_MAPS_EMERGENCY_SEARCH_QUERY = 'Центр неотложной офтальмологической помощи'
-
-function openNearestEmergencyHospitalOnMap() {
-  const url = `https://yandex.ru/maps/?text=${encodeURIComponent(YANDEX_MAPS_EMERGENCY_SEARCH_QUERY)}`
-  window.open(url, '_blank', 'noopener,noreferrer')
-}
+const emergencyMapUrl = computed(() => `https://yandex.ru/maps/?text=${encodeURIComponent(YANDEX_MAPS_EMERGENCY_SEARCH_QUERY)}`)
 
 // Colors for SVG indicators
 function getThreatColor(level: number) {
@@ -3274,17 +3270,19 @@ onUnmounted(() => {
                             </a>
                             – общефедеральный номер вызова скорой медицинской помощи
                           </p>
-                          <button
-                            type="button"
+                          <a
+                            :href="emergencyMapUrl"
+                            target="_blank"
+                            rel="noopener noreferrer"
                             class="btn-find-hospital-maps"
-                            @click.stop="openNearestEmergencyHospitalOnMap"
+                            @click.stop
                           >
                             <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" aria-hidden="true">
                               <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
                               <circle cx="12" cy="10" r="3"></circle>
                             </svg>
                             Найти пункт неотложной помощи на карте
-                          </button>
+                          </a>
                         </div>
                       </div>
                     </div>
