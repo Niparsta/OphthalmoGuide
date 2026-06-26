@@ -9,7 +9,7 @@ namespace bot_workerservice.Services
     public class BotRateLimiter
     {
         private readonly IConnectionMultiplexer _redis;
-        private const int MaxMessages = 10;
+        private const int MaxMessages = 8;
         private const int WindowSeconds = 10;
         private const int BlockExpiryMinutes = 5;
 
